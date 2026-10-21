@@ -58,6 +58,23 @@ def cmd_init(args: argparse.Namespace) -> None:
     paths.init()
     Memory(paths).close()
     print(f"{'Already initialized' if existed else 'Initialized'}: {paths.state}")
+    if args.claude:
+        from nazareth.claude_code import install
+
+        for path, what in install(paths.project):
+            print(f"  {path}: {what}")
+
+
+def cmd_context(args: argparse.Namespace) -> None:
+    """For Claude Code's SessionStart hook: print a memory snapshot, or
+    nothing at all if this project doesn't use nazareth."""
+    from nazareth.claude_code import render_context
+
+    paths = _paths(args)
+    if not paths.initialized:
+        return
+    mem = Memory(paths)
+    print(render_context(mem.brief()))
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
@@ -203,10 +220,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(fn=fn)
         return p
 
-    add("init", cmd_init, "create .nazareth/ in this project")
+    add("init", cmd_init, "create .nazareth/ in this project").add_argument(
+        "--claude", action="store_true",
+        help="also add lens subagents, the MCP server and a context hook for Claude Code")
     add("serve", cmd_serve, "run the MCP memory server (stdio)")
     add("status", cmd_status, "what needs you, what's decided, what happened").add_argument(
         "--json", action="store_true")
+    add("context", cmd_context, "memory snapshot for agent session start (hook)")
     add("verify", cmd_verify, "check the ledger hash chain")
     add("rebuild", cmd_rebuild, "rebuild the index from the ledger")
 

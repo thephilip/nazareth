@@ -12,6 +12,7 @@ dev = [
     "pytest",
     "pytest-asyncio",
     "ruff",
+    "pyyaml",
 ]
 
 [project.scripts]
@@ -26,6 +27,9 @@ line-length = 100
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+nazareth = ["templates/claude/*.md"]
 
 [build-system]
 requires = ["setuptools>=75"]

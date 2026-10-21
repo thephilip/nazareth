@@ -434,6 +434,7 @@ class Memory:
             "constraints": [_record_out(r, full=False)
                             for r in self.index.records(kind="constraint", status="active")],
             "decisions": [_record_out(r, full=False) for r in decisions[:BRIEF_DECISION_LIMIT]],
+            "active_decision_count": len(decisions),
         }
         if len(decisions) > BRIEF_DECISION_LIMIT:
             out["decisions_truncated"] = (

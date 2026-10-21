@@ -42,17 +42,31 @@ nazareth init          # creates .nazareth/ (ledger + derived index)
 nazareth status
 ```
 
-Register the MCP server with your agent host, e.g. Claude Code:
+### Claude Code
 
 ```bash
-claude mcp add nazareth -e NAZARETH_ACTOR=lens:code -- nazareth serve
+nazareth init --claude
 ```
+
+This adds, without overwriting anything that already exists:
+
+- `.claude/agents/lens-{architect,code,reviewer}.md`: lens subagents. Each runs its own
+  `nazareth serve` with a fixed `NAZARETH_ACTOR`, and is denied the main session's
+  nazareth tools so it can't write under the wrong identity.
+- `.mcp.json`: the `nazareth` server for the main session (actor `agent:main`).
+- `.claude/settings.json`: a `SessionStart` hook running `nazareth context`, which injects
+  the phase, constraints and active decisions at startup, resume, clear and compaction.
+
+Lens subagents' own servers only load in folders you've trusted in Claude Code, and Claude
+Code asks you to approve `.mcp.json` servers the first time.
+
+Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`.
 
 ## CLI (you are actor `human`)
 
 | Command | Purpose |
 |---|---|
-| `init` | Create `.nazareth/` for this project |
+| `init [--claude]` | Create `.nazareth/`; `--claude` adds the Claude Code integration |
 | `status` | What needs you, constraints, decisions, recent activity |
 | `answer <q-id> "..."` | Answer a lens's question |
 | `resolve <id> --accept\|--reject` | Settle a pending decision |
@@ -64,6 +78,7 @@ claude mcp add nazareth -e NAZARETH_ACTOR=lens:code -- nazareth serve
 | `verify` | Check the hash chain |
 | `rebuild` | Regenerate the index from the ledger |
 | `serve` | Run the MCP server (stdio) |
+| `context` | Memory snapshot for agent session start (used by the hook) |
 
 ## MCP tools (for lenses)
 
@@ -97,8 +112,8 @@ claude mcp add nazareth -e NAZARETH_ACTOR=lens:code -- nazareth serve
 ## Roadmap
 
 1. ~~Concurrency-safe ledger~~ · ~~decision store~~ · ~~human CLI~~
-2. Semantic search: LanceDB + local embeddings, projected from the ledger
-3. Claude Code lens definitions; dogfood on nazareth itself
+2. ~~Claude Code lens definitions~~; dogfood on nazareth itself
+3. Semantic search: LanceDB + local embeddings, projected from the ledger
 4. Docker Agent lenses (`lenses/` predates the current design and needs rewriting),
    hook-based routing (built-in `task_route` or a Laya classifier)
 5. Graphiti as an optional, asynchronous enrichment layer

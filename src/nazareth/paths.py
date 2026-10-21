@@ -14,12 +14,14 @@ _STATE_GITIGNORE = "index.db*\n*.lock\n"
 
 
 def find_project_dir(start: Path | None = None) -> Path:
-    """NAZARETH_PROJECT_DIR wins; otherwise the nearest ancestor that already
-    has a state dir, then the nearest git root, then the start dir itself."""
+    """NAZARETH_PROJECT_DIR wins; otherwise search upward from the start dir
+    (default: CLAUDE_PROJECT_DIR when Claude Code launched us, else cwd) for
+    an existing state dir, then a git root, falling back to the start dir."""
     env = os.environ.get("NAZARETH_PROJECT_DIR")
     if env:
         return Path(env).expanduser().resolve()
-    start = (start or Path.cwd()).resolve()
+    claude_dir = os.environ.get("CLAUDE_PROJECT_DIR")
+    start = (start or (Path(claude_dir) if claude_dir else Path.cwd())).resolve()
     candidates = [start, *start.parents]
     for marker in (STATE_DIRNAME, ".git"):
         for d in candidates:
