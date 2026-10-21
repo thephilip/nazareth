@@ -1,0 +1,453 @@
+"""The memory service: every read and write the MCP server and CLI perform.
+
+Write policy (decided under the ledger lock, then recorded in the event):
+
+- A record can only supersede records that are currently active. Superseding a
+  stale record is an error that names the record now in effect, so an agent
+  working from old context is corrected instead of silently forking history.
+- A decision on a topic that already has an active decision must supersede it
+  explicitly. If it doesn't, it is recorded as *pending* for human review.
+- Only the human may supersede what the human decided. A lens that tries is
+  recorded as *pending* too.
+- Pending records have no effect until the human resolves them.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import time
+import uuid
+from datetime import datetime
+from typing import Any
+
+from nazareth.ledger.chain import Ledger, LedgerEntry
+from nazareth.memory.projection import DOMAIN_ACTIONS, Projection
+from nazareth.paths import StatePaths
+
+HUMAN = "human"
+BRIEF_DECISION_LIMIT = 100
+
+
+class NazarethError(Exception):
+    """An anticipated failure whose message is written for the caller to act on."""
+
+
+def _iso(ts: float | None) -> str | None:
+    if ts is None:
+        return None
+    return datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
+
+
+def _norm_topic(topic: str) -> str:
+    return re.sub(r"[\s_]+", "-", topic.strip().lower())
+
+
+def _clean_ids(ids: list[str] | None) -> list[str]:
+    return list(dict.fromkeys(i.strip() for i in ids or [] if i.strip()))
+
+
+def parse_since(since: str) -> float:
+    """'30m', '8h', '7d', or an ISO date/time → epoch seconds."""
+    s = since.strip().lower()
+    m = re.fullmatch(r"(\d+(?:\.\d+)?)\s*([smhdw])", s)
+    if m:
+        mult = {"s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800}[m.group(2)]
+        return time.time() - float(m.group(1)) * mult
+    try:
+        dt = datetime.fromisoformat(since.strip())
+    except ValueError:
+        raise NazarethError(
+            f"Can't parse since={since!r}. Use a duration like '30m', '8h', '7d' or an ISO date."
+        ) from None
+    return (dt if dt.tzinfo else dt.astimezone()).timestamp()
+
+
+def _record_out(row: sqlite3.Row, *, full: bool = True) -> dict[str, Any]:
+    out: dict[str, Any] = {"id": row["id"], "kind": row["kind"]}
+    if row["topic"]:
+        out["topic"] = row["topic"]
+    out["text"] = row["text"]
+    out["status"] = row["status"]
+    if full:
+        if row["rationale"]:
+            out["rationale"] = row["rationale"]
+        out["actor"] = row["actor"]
+        out["ts"] = _iso(row["ts"])
+        if row["status_reason"]:
+            out["status_reason"] = row["status_reason"]
+        if row["superseded_by"]:
+            out["superseded_by"] = row["superseded_by"]
+    return out
+
+
+def _question_out(row: sqlite3.Row) -> dict[str, Any]:
+    out: dict[str, Any] = {"id": row["id"], "question": row["question"], "status": row["status"]}
+    for key in ("context", "ref", "answer", "answered_by"):
+        if row[key]:
+            out[key] = row[key]
+    out["asked_by"] = row["actor"]
+    out["ts"] = _iso(row["ts"])
+    if row["answered_ts"]:
+        out["answered_ts"] = _iso(row["answered_ts"])
+    return out
+
+
+def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
+    get = (lambda k: getattr(e, k)) if isinstance(e, LedgerEntry) else (lambda k: e[k])
+    out = {"id": get("id"), "ts": _iso(get("ts")), "actor": get("actor"),
+           "action": get("action"), "summary": get("summary")}
+    if get("ref"):
+        out["ref"] = get("ref")
+    return out
+
+
+class Memory:
+    def __init__(self, paths: StatePaths) -> None:
+        if not paths.initialized:
+            raise NazarethError(
+                f"Nazareth isn't initialized for {paths.project}. "
+                "Ask the human to run `nazareth init` there."
+            )
+        self.paths = paths
+        self.ledger = Ledger(paths.ledger)
+        self.index = Projection(paths.index, self.ledger)
+        self.index.sync()
+
+    def close(self) -> None:
+        self.index.close()
+
+    # -- internals ------------------------------------------------------------
+
+    def _new_id(self, prefix: str) -> str:
+        while True:
+            rid = f"{prefix}-{uuid.uuid4().hex[:6]}"
+            if self.index.record(rid) is None and self.index.question(rid) is None:
+                return rid
+
+    def _require_record(self, rid: str) -> sqlite3.Row:
+        row = self.index.record(rid)
+        if row is None:
+            raise NazarethError(f"Unknown record id {rid!r}. Use `query` to find current IDs.")
+        return row
+
+    def _check_supersedable(self, ids: list[str], kind: str) -> list[sqlite3.Row]:
+        rows = []
+        for rid in ids:
+            row = self._require_record(rid)
+            if row["kind"] != kind:
+                raise NazarethError(f"{rid} is a {row['kind']}; a {kind} can only supersede {kind}s.")
+            status = row["status"]
+            if status == "superseded":
+                current = self.index.current_successor(rid)
+                raise NazarethError(
+                    f"{rid} was already superseded; {current} is the {kind} in effect now. "
+                    f"Read it with query(id={current!r}) and supersede {current} instead."
+                )
+            if status == "pending":
+                raise NazarethError(f"{rid} is pending human review and can't be superseded yet.")
+            if status != "active":
+                raise NazarethError(f"{rid} is {status} and no longer in effect; nothing to supersede.")
+            rows.append(row)
+        return rows
+
+    def _related(self, text: str, exclude: set[str], limit: int = 5) -> list[dict[str, Any]]:
+        out = []
+        for rid, kind in self.index.search(text):
+            if kind in ("decision", "constraint") and rid not in exclude:
+                row = self.index.record(rid)
+                if row is not None and row["status"] == "active":
+                    out.append(_record_out(row, full=False))
+            if len(out) >= limit:
+                break
+        return out
+
+    def _write_record(
+        self,
+        kind: str,
+        actor: str,
+        text: str,
+        rationale: str,
+        topic: str | None,
+        supersedes: list[str] | None,
+        depends_on: list[str] | None,
+    ) -> dict[str, Any]:
+        if not text.strip():
+            raise NazarethError(f"The {kind} text is empty.")
+        supersedes, depends_on = _clean_ids(supersedes), _clean_ids(depends_on)
+        warnings: list[str] = []
+        with self.ledger.transaction():
+            self.index.sync()
+            superseded_rows = self._check_supersedable(supersedes, kind)
+            for rid in depends_on:
+                row = self._require_record(rid)
+                if row["status"] != "active":
+                    current = self.index.current_successor(rid)
+                    hint = f"; {current} is in effect now" if current != rid else ""
+                    warnings.append(f"depends_on {rid} which is {row['status']}{hint}.")
+
+            reasons = []
+            if kind == "decision":
+                conflicts = [r["id"] for r in self.index.records(kind="decision", status="active",
+                                                                  topic=topic)
+                             if r["id"] not in supersedes]
+                if conflicts:
+                    reasons.append(
+                        f"topic {topic!r} already has active decision(s) {', '.join(conflicts)} "
+                        "that this doesn't supersede"
+                    )
+            if actor != HUMAN:
+                human_owned = [r["id"] for r in superseded_rows if r["actor"] == HUMAN]
+                if human_owned:
+                    reasons.append(f"it supersedes human-made {', '.join(human_owned)}")
+            status = "pending" if reasons else "active"
+
+            rid = self._new_id("dec" if kind == "decision" else "con")
+            record = {"id": rid, "topic": topic, "text": text.strip(), "rationale": rationale.strip(),
+                      "status": status, "supersedes": supersedes, "depends_on": depends_on}
+            if reasons:
+                record["status_reason"] = "; ".join(reasons)
+            self.ledger.append(actor=actor, action=kind, summary=text.strip(), ref=rid,
+                               payload={"record": record})
+        self.index.sync()
+
+        out: dict[str, Any] = {"id": rid, "status": status}
+        if status == "active":
+            if supersedes:
+                out["superseded"] = supersedes
+        else:
+            out["pending_reason"] = record["status_reason"]
+            out["note"] = (
+                "Not in effect until the human resolves it. To replace the existing record "
+                "yourself, call again with supersedes=[...] listing it; otherwise carry on "
+                "without relying on this one."
+            )
+        related = self._related(f"{topic or ''} {text}", exclude={rid, *supersedes})
+        if related:
+            out["related_active"] = related
+        if warnings:
+            out["warnings"] = warnings
+        return out
+
+    # -- writes ---------------------------------------------------------------
+
+    def decide(self, topic: str, decision: str, rationale: str, actor: str,
+               supersedes: list[str] | None = None,
+               depends_on: list[str] | None = None) -> dict[str, Any]:
+        topic = _norm_topic(topic)
+        if not topic:
+            raise NazarethError("A decision needs a topic (e.g. 'auth', 'storage').")
+        return self._write_record("decision", actor, decision, rationale, topic,
+                                  supersedes, depends_on)
+
+    def constrain(self, constraint: str, reason: str, actor: str, topic: str | None = None,
+                  supersedes: list[str] | None = None) -> dict[str, Any]:
+        topic = _norm_topic(topic) if topic else None
+        return self._write_record("constraint", actor, constraint, reason, topic or None,
+                                  supersedes, None)
+
+    def ask(self, question: str, actor: str, context: str | None = None,
+            ref: str | None = None) -> dict[str, Any]:
+        if not question.strip():
+            raise NazarethError("The question is empty.")
+        with self.ledger.transaction():
+            self.index.sync()
+            qid = self._new_id("q")
+            payload = {"id": qid, "question": question.strip()}
+            if context:
+                payload["context"] = context.strip()
+            self.ledger.append(actor=actor, action="question", summary=question.strip(),
+                               ref=ref, payload=payload)
+        self.index.sync()
+        return {"id": qid, "status": "open",
+                "note": "The human will answer asynchronously; answers show up in `brief`."}
+
+    def answer(self, question_id: str, answer: str, actor: str = HUMAN) -> dict[str, Any]:
+        with self.ledger.transaction():
+            self.index.sync()
+            row = self.index.question(question_id)
+            if row is None:
+                raise NazarethError(f"Unknown question id {question_id!r}.")
+            if row["status"] != "open":
+                raise NazarethError(f"{question_id} is already {row['status']}.")
+            self.ledger.append(actor=actor, action="answer", summary=answer.strip(),
+                               ref=question_id,
+                               payload={"question_id": question_id, "answer": answer.strip()})
+        self.index.sync()
+        return {"id": question_id, "status": "answered"}
+
+    def resolve(self, record_id: str, accept: bool, note: str | None = None,
+                actor: str = HUMAN) -> dict[str, Any]:
+        """Accept or reject a pending record. Accepting a decision also
+        supersedes whatever active decisions it conflicted with on its topic."""
+        dropped: list[str] = []
+        with self.ledger.transaction():
+            self.index.sync()
+            row = self._require_record(record_id)
+            if row["status"] != "pending":
+                raise NazarethError(f"{record_id} is {row['status']}, not pending.")
+            payload: dict[str, Any] = {"id": record_id,
+                                       "outcome": "accepted" if accept else "rejected"}
+            if note:
+                payload["note"] = note
+            if accept:
+                wanted = [l["dst"] for l in self.index.links(src=record_id, link_type="supersedes")]
+                if row["kind"] == "decision":
+                    wanted += [r["id"] for r in self.index.records(
+                        kind="decision", status="active", topic=row["topic"])]
+                supersedes = []
+                for rid in dict.fromkeys(wanted):
+                    target = self.index.record(rid)
+                    if target is not None and target["status"] == "active":
+                        supersedes.append(rid)
+                    else:
+                        dropped.append(rid)
+                payload["supersedes"] = supersedes
+            self.ledger.append(actor=actor, action="resolution",
+                               summary=f"{payload['outcome']} {record_id}", ref=record_id,
+                               payload=payload)
+        self.index.sync()
+        out: dict[str, Any] = {"id": record_id, "status": "active" if accept else "rejected"}
+        if accept and payload["supersedes"]:
+            out["superseded"] = payload["supersedes"]
+        if dropped:
+            out["skipped"] = [f"{rid} was no longer active" for rid in dropped]
+        return out
+
+    def retire(self, record_id: str, reason: str, actor: str = HUMAN) -> dict[str, Any]:
+        with self.ledger.transaction():
+            self.index.sync()
+            row = self._require_record(record_id)
+            if row["status"] != "active":
+                raise NazarethError(f"{record_id} is {row['status']}, not active.")
+            self.ledger.append(actor=actor, action="retirement", summary=f"retired {record_id}",
+                               ref=record_id, payload={"id": record_id, "reason": reason})
+        self.index.sync()
+        return {"id": record_id, "status": "retired"}
+
+    def set_phase(self, actor: str, current: str | None = None,
+                  next_phase: str | None = None) -> dict[str, Any]:
+        if current is None and next_phase is None:
+            raise NazarethError("Give a new current phase, a new next phase, or both.")
+        with self.ledger.transaction():
+            self.index.sync()
+            phase = self.index.phase()
+            new = {"current": (current or phase["current"]).strip(),
+                   "next": (next_phase or phase["next"]).strip()}
+            self.ledger.append(actor=actor, action="phase",
+                               summary=f"phase {new['current']} (next: {new['next']})",
+                               payload=new)
+        self.index.sync()
+        return new
+
+    def log(self, action: str, summary: str, actor: str, ref: str | None = None,
+            severity: str | None = None) -> dict[str, Any]:
+        action = action.strip().lower()
+        if not action or not summary.strip():
+            raise NazarethError("log needs an action and a summary.")
+        if action in DOMAIN_ACTIONS:
+            raise NazarethError(
+                f"{action!r} is reserved. Use decide/constrain/ask/phase for state changes; "
+                "log is for events like 'artifact', 'finding', 'test', 'refactor'."
+            )
+        payload = {"severity": severity.strip().lower()} if severity else {}
+        entry = self.ledger.append(actor=actor, action=action, summary=summary.strip(),
+                                   ref=ref, payload=payload)
+        self.index.sync()
+        return {"id": entry.id, "seq": entry.seq}
+
+    # -- reads ----------------------------------------------------------------
+
+    def phase(self) -> dict[str, str]:
+        self.index.sync()
+        return self.index.phase()
+
+    def get(self, item_id: str) -> dict[str, Any]:
+        self.index.sync()
+        item_id = item_id.strip()
+        row = self.index.record(item_id)
+        if row is not None:
+            out = _record_out(row)
+            if row["status"] == "superseded":
+                out["current"] = self.index.current_successor(item_id)
+            for key, rows in (
+                ("supersedes", self.index.links(src=item_id, link_type="supersedes")),
+                ("depends_on", self.index.links(src=item_id, link_type="depends_on")),
+            ):
+                if rows:
+                    out[key] = [r["dst"] for r in rows]
+            dependents = self.index.links(dst=item_id, link_type="depends_on")
+            if dependents:
+                out["dependents"] = [r["src"] for r in dependents]
+            return out
+        q = self.index.question(item_id)
+        if q is not None:
+            return _question_out(q)
+        ev = self.index.event(item_id)
+        if ev is not None:
+            out = _event_out(ev)
+            if ev["severity"]:
+                out["severity"] = ev["severity"]
+            return out
+        raise NazarethError(f"Nothing with id {item_id!r}.")
+
+    def search(self, text: str, include_inactive: bool = False,
+               limit: int = 10) -> dict[str, Any]:
+        self.index.sync()
+        records, questions, events = [], [], []
+        for rid, kind in self.index.search(text, limit=200):
+            if kind in ("decision", "constraint") and len(records) < limit:
+                row = self.index.record(rid)
+                if row is None:
+                    continue
+                if row["status"] in ("active", "pending"):
+                    records.append(_record_out(row))
+                elif include_inactive:
+                    out = _record_out(row)
+                    if row["status"] == "superseded":
+                        out["current"] = self.index.current_successor(rid)
+                    records.append(out)
+            elif kind == "question" and len(questions) < limit:
+                q = self.index.question(rid)
+                if q is not None:
+                    questions.append(_question_out(q))
+            elif kind == "event" and len(events) < limit:
+                ev = self.index.event(rid)
+                if ev is not None:
+                    events.append(_event_out(ev))
+        return {"records": records, "questions": questions, "events": events}
+
+    def history(self, since: str | None = None, actor: str | None = None,
+                action: str | None = None, limit: int = 50) -> dict[str, Any]:
+        entries = self.ledger.query(
+            actor=actor, action=action, since=parse_since(since) if since else None,
+            limit=max(1, min(limit, 500)),
+        )
+        return {"entries": [_event_out(e) for e in entries], "count": len(entries)}
+
+    def brief(self) -> dict[str, Any]:
+        """Everything a lens needs to orient itself, in one call."""
+        self.index.sync()
+        decisions = self.index.records(kind="decision", status="active")
+        out: dict[str, Any] = {
+            "phase": self.index.phase(),
+            "constraints": [_record_out(r, full=False)
+                            for r in self.index.records(kind="constraint", status="active")],
+            "decisions": [_record_out(r, full=False) for r in decisions[:BRIEF_DECISION_LIMIT]],
+        }
+        if len(decisions) > BRIEF_DECISION_LIMIT:
+            out["decisions_truncated"] = (
+                f"{len(decisions) - BRIEF_DECISION_LIMIT} more active decisions; use query."
+            )
+        pending = self.index.records(status="pending")
+        if pending:
+            out["pending_review"] = [_record_out(r, full=False) | {"reason": r["status_reason"]}
+                                     for r in pending]
+        open_q = self.index.questions(status="open")
+        if open_q:
+            out["open_questions"] = [_question_out(q) for q in open_q]
+        answered = self.index.questions(status="answered", limit=10, order="answered_ts")
+        if answered:
+            out["recent_answers"] = [_question_out(q) for q in answered]
+        out["recent_activity"] = [_event_out(e) for e in self.ledger.query(limit=10)]
+        return out

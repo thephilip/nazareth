@@ -1,16 +1,19 @@
 # Nazareth
 
-Agent-native memory layer with temporal knowledge graph, hash-chain ledger, and lens orchestration.
+Agent-native shared project memory: hash-chained ledger as source of truth, SQLite projection
+for decisions/constraints/questions, MCP server for agent lenses, CLI for the human.
 
 ## Project Structure
 
 - `src/nazareth/` — Python package
-  - `server.py` — MCP memory server (7 tools: decide, constrain, query, log, supersede, phase, history)
-  - `cli.py` — CLI entry point (`nazareth serve`, `nazareth verify`)
-  - `ledger/chain.py` — Hash-chained append-only event log
-  - `memory/graph.py` — Graphiti + FalkorDB wrapper
-- `lenses/` — Docker Agent YAML definitions (architect, code, reviewer, root orchestrator)
-- `tests/` — pytest test suite
+  - `ledger/chain.py` — Hash-chained append-only log; file-locked appends, safe across processes
+  - `memory/projection.py` — SQLite index derived from the ledger (records, links, questions, FTS5)
+  - `memory/service.py` — `Memory`: all reads/writes and the write policy (supersession, pending)
+  - `server.py` — MCP server (8 tools: brief, query, decide, constrain, ask, log, phase, history)
+  - `cli.py` — Human CLI (`nazareth status`, `answer`, `resolve`, …)
+  - `paths.py` — Finds the project's `.nazareth/` state dir
+- `lenses/` — Docker Agent YAML (stale; predates current design, to be rewritten)
+- `tests/` — pytest suite
 
 ## Development
 
@@ -18,18 +21,20 @@ Agent-native memory layer with temporal knowledge graph, hash-chain ledger, and 
 source .venv/bin/activate
 pip install -e ".[dev]"
 pytest
+ruff check src tests
 ```
-
-## Dependencies
-
-- FalkorDB (via docker-compose) for the temporal knowledge graph
-- Graphiti for entity extraction and supersession detection
-- LanceDB for vector search
-- MCP for the agent-facing tool interface
 
 ## Key Design Decisions
 
-- Lenses are stateless perspectives that query shared state, not persistent workers
-- The ledger is tamper-evident (SHA256 hash chain) — `nazareth verify` checks integrity
-- Graphiti handles supersession automatically via LLM-driven entity extraction
-- All MCP tool calls are self-audited (logged to the ledger)
+- The ledger is the only source of truth. `index.db` is a projection: never write to it
+  directly; `nazareth rebuild` must always reproduce it.
+- Write-time policy outcomes (active vs. pending) are stored in the event, so replay is faithful
+  even if the policy changes later.
+- No LLM or network calls on the write path. Enrichment (embeddings, Graphiti) must be derived
+  and asynchronous.
+- Every lens runs its own `nazareth serve` process. Anything that checks state and then writes
+  must do so inside `ledger.transaction()` after `index.sync()`.
+- Agent-facing errors raise `NazarethError` with an actionable message; the server converts them
+  to MCP `ToolError` (other exceptions reach the agent only as a generic failure).
+- MCP SDK is 2.x (`mcp.server.mcpserver.MCPServer`, snake_case result fields).
+- Reads are not logged to the ledger; state changes are, and that is the audit trail.

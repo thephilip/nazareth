@@ -1,434 +1,138 @@
 """Nazareth MCP memory server.
 
-Exposes 7 operations for agent lenses to read/write shared project state:
-decide, constrain, query, log, supersede, phase, history.
-
-Backed by Graphiti (temporal knowledge graph), a JSONL hash-chain ledger,
-and LanceDB (vector search).
+A thin MCP layer over `Memory`. Every state change is a ledger event, so the
+ledger is the audit trail; read-only calls are not logged.
 """
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
-import time
-from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp.types import TextContent, Tool
+from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 
-from nazareth.ledger.chain import Ledger
-from nazareth.memory.graph import create_graph
-from nazareth.memory.vectors import VectorIndex
+from nazareth.memory.service import Memory, NazarethError
+from nazareth.paths import StatePaths, find_project_dir
 
-PROJECT_DIR = Path(os.environ.get("NAZARETH_PROJECT_DIR", "."))
-STATE_DIR = PROJECT_DIR / ".state"
-LEDGER_PATH = STATE_DIR / "ledger" / "events.jsonl"
-VECTOR_DB_PATH = STATE_DIR / "vectors"
-PHASE_PATH = STATE_DIR / "phase.md"
+INSTRUCTIONS = """\
+Nazareth is this project's shared memory: decisions, constraints, open questions
+and an append-only log, shared by every agent and the human.
 
-
-def _read_phase() -> dict[str, str]:
-    if not PHASE_PATH.exists():
-        return {"current": "brainstorm", "next": "scaffold"}
-    lines = PHASE_PATH.read_text().strip().splitlines()
-    result = {}
-    for line in lines:
-        if line.startswith("current:"):
-            result["current"] = line.split(":", 1)[1].strip()
-        elif line.startswith("next:"):
-            result["next"] = line.split(":", 1)[1].strip()
-    return result or {"current": "brainstorm", "next": "scaffold"}
+- Start every task with `brief` to load the phase, constraints, active decisions
+  and anything waiting on the human.
+- Constraints are non-negotiable. Active decisions are binding until superseded.
+- Record choices with `decide`. To change one, pass its id in `supersedes`; a
+  conflicting decision that doesn't is held as pending for the human.
+- When you need the human, `ask` instead of guessing or blocking.
+- `log` what you produce (artifacts, findings, tests) so others can find it.
+"""
 
 
-def _write_phase(current: str, next_phase: str) -> None:
-    PHASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PHASE_PATH.write_text(f"current: {current}\nnext: {next_phase}\n")
+def _actor(actor: str | None) -> str:
+    return (actor or os.environ.get("NAZARETH_ACTOR") or "agent").strip()
 
 
-TOOLS = [
-    Tool(
-        name="decide",
-        description=(
-            "Record a project decision with rationale. Automatically supersedes "
-            "prior decisions on the same topic via the temporal knowledge graph."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "topic": {
-                    "type": "string",
-                    "description": "Decision domain (e.g. 'authentication', 'database', 'api-design')",
-                },
-                "decision": {
-                    "type": "string",
-                    "description": "What was decided",
-                },
-                "rationale": {
-                    "type": "string",
-                    "description": "Why this decision was made",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Who made this decision (e.g. 'lens:architect', 'human')",
-                },
-            },
-            "required": ["topic", "decision", "rationale", "actor"],
-        },
-    ),
-    Tool(
-        name="constrain",
-        description=(
-            "Add a non-negotiable project constraint that all lenses must respect."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "constraint": {
-                    "type": "string",
-                    "description": "The constraint (e.g. 'No OAuth for MVP')",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why this constraint exists",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Who set this constraint",
-                },
-            },
-            "required": ["constraint", "reason", "actor"],
-        },
-    ),
-    Tool(
-        name="query",
-        description=(
-            "Query the project knowledge graph. Returns currently valid decisions, "
-            "constraints, and context with dependency chains. Use natural language."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "question": {
-                    "type": "string",
-                    "description": "Natural language question (e.g. 'What decisions affect auth?')",
-                },
-                "lens": {
-                    "type": "string",
-                    "description": "Which lens is asking (scopes the response)",
-                },
-            },
-            "required": ["question"],
-        },
-    ),
-    Tool(
-        name="log",
-        description=(
-            "Append an event to the project ledger. Used for actions taken, "
-            "artifacts produced, findings raised."
-        ),
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "description": "Event type (e.g. 'artifact', 'finding', 'refactor', 'test')",
-                },
-                "summary": {
-                    "type": "string",
-                    "description": "What happened",
-                },
-                "ref": {
-                    "type": "string",
-                    "description": "File or resource reference (e.g. 'src/auth/api_key.ts:23')",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Who did this",
-                },
-                "severity": {
-                    "type": "string",
-                    "description": "For findings: low, medium, high, critical",
-                },
-            },
-            "required": ["action", "summary", "actor"],
-        },
-    ),
-    Tool(
-        name="supersede",
-        description="Explicitly mark a decision as replaced by a newer one.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "old_topic": {
-                    "type": "string",
-                    "description": "Topic of the decision being superseded",
-                },
-                "new_decision": {
-                    "type": "string",
-                    "description": "The replacement decision",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Why it was superseded",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Who made this change",
-                },
-            },
-            "required": ["old_topic", "new_decision", "reason", "actor"],
-        },
-    ),
-    Tool(
-        name="phase",
-        description="Get or set the current project phase.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "set_current": {
-                    "type": "string",
-                    "description": "Set current phase (omit to just read)",
-                },
-                "set_next": {
-                    "type": "string",
-                    "description": "Set next phase (omit to just read)",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Who changed the phase",
-                },
-            },
-        },
-    ),
-    Tool(
-        name="history",
-        description="Query the project ledger for past events.",
-        inputSchema={
-            "type": "object",
-            "properties": {
-                "since": {
-                    "type": "string",
-                    "description": "Time window (e.g. '1h', '8h', '24h', '7d')",
-                },
-                "actor": {
-                    "type": "string",
-                    "description": "Filter by actor",
-                },
-                "action": {
-                    "type": "string",
-                    "description": "Filter by action type",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max entries to return (default 50)",
-                },
-            },
-        },
-    ),
-]
+def build_server(paths: StatePaths | None = None) -> MCPServer:
+    paths = paths or StatePaths(find_project_dir())
+    server = MCPServer("nazareth", instructions=INSTRUCTIONS)
+    state: dict[str, Memory] = {}
+
+    def call(fn: Callable[[Memory], Any]) -> Any:
+        try:
+            if "mem" not in state:
+                state["mem"] = Memory(paths)
+            return fn(state["mem"])
+        except NazarethError as e:
+            raise ToolError(str(e)) from e
+
+    @server.tool()
+    def brief() -> dict:
+        """Orient yourself: current phase, all active constraints, all active
+        decisions (id, topic, text), records pending human review, open and
+        recently answered questions, and recent activity. Call this first."""
+        return call(lambda m: m.brief())
+
+    @server.tool()
+    def query(text: str | None = None, id: str | None = None,
+              include_inactive: bool = False, limit: int = 10) -> dict:
+        """Look things up. Pass `id` to read one decision, constraint, question
+        or event in full, including what it supersedes, what superseded it and
+        what depends on it. Or pass `text` to keyword-search decisions,
+        constraints, questions and logged events. Only records in effect (or
+        pending) are returned unless include_inactive is true; superseded ones
+        then carry `current`, the id now in effect."""
+        if id:
+            return call(lambda m: m.get(id))
+        if text:
+            return call(lambda m: m.search(text, include_inactive=include_inactive, limit=limit))
+        raise ToolError("Pass `text` to search or `id` to read one item.")
+
+    @server.tool()
+    def decide(topic: str, decision: str, rationale: str,
+               supersedes: list[str] | None = None, depends_on: list[str] | None = None,
+               actor: str | None = None) -> dict:
+        """Record a decision and why. `topic` is a short area like 'auth' or
+        'storage'. To change an earlier decision, list its id in `supersedes`;
+        without that, a decision on a topic that already has one is held as
+        pending for the human. Superseding something already replaced fails
+        and names the current one. `depends_on` lists ids this builds on.
+        Returns the new id, its status, and related active records to check
+        for overlap. `actor` is who you are, e.g. 'lens:architect'."""
+        return call(lambda m: m.decide(topic, decision, rationale, _actor(actor),
+                                       supersedes=supersedes, depends_on=depends_on))
+
+    @server.tool()
+    def constrain(constraint: str, reason: str, topic: str | None = None,
+                  supersedes: list[str] | None = None, actor: str | None = None) -> dict:
+        """Record a non-negotiable project constraint (e.g. 'No OAuth for MVP')
+        that every agent must respect. To replace one, list its id in
+        `supersedes`."""
+        return call(lambda m: m.constrain(constraint, reason, _actor(actor), topic=topic,
+                                          supersedes=supersedes))
+
+    @server.tool()
+    def ask(question: str, context: str | None = None, ref: str | None = None,
+            actor: str | None = None) -> dict:
+        """Leave a question for the human instead of guessing or blocking.
+        They answer asynchronously; answers appear in `brief`. Include enough
+        `context` to answer without reading the code; `ref` is a file or id."""
+        return call(lambda m: m.ask(question, _actor(actor), context=context, ref=ref))
+
+    @server.tool()
+    def log(action: str, summary: str, ref: str | None = None, severity: str | None = None,
+            actor: str | None = None) -> dict:
+        """Append an event to the project ledger: what you produced or found.
+        `action` is a short verb-noun like 'artifact', 'finding', 'test',
+        'refactor'. `ref` is a file or resource (e.g. 'src/auth.py:23').
+        `severity` (low/medium/high/critical) is for findings."""
+        return call(lambda m: m.log(action, summary, _actor(actor), ref=ref, severity=severity))
+
+    @server.tool()
+    def phase(set_current: str | None = None, set_next: str | None = None,
+              actor: str | None = None) -> dict:
+        """Read the project phase (e.g. brainstorm, scaffold, mvp, harden), or
+        change it by passing set_current and/or set_next. Respect it: don't
+        gold-plate during MVP or cut corners while hardening."""
+        if set_current is None and set_next is None:
+            return call(lambda m: m.phase())
+        return call(lambda m: m.set_phase(_actor(actor), current=set_current,
+                                          next_phase=set_next))
+
+    @server.tool()
+    def history(since: str | None = None, actor: str | None = None,
+                action: str | None = None, limit: int = 50) -> dict:
+        """Read the ledger, newest last. Filter by `since` ('30m', '8h', '7d'
+        or an ISO date), `actor`, and `action` (e.g. 'decision', 'finding')."""
+        return call(lambda m: m.history(since=since, actor=actor, action=action, limit=limit))
+
+    return server
 
 
-def _parse_duration(s: str) -> float:
-    """Convert duration string to seconds offset from now."""
-    s = s.strip().lower()
-    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
-    for suffix, mult in multipliers.items():
-        if s.endswith(suffix):
-            return time.time() - float(s[:-1]) * mult
-    return 0.0
-
-
-class NazarethServer:
-    def __init__(self) -> None:
-        self.server = Server("nazareth")
-        self.ledger = Ledger(LEDGER_PATH)
-        self.graphiti = None
-        self.vectors = VectorIndex(VECTOR_DB_PATH)
-        self._setup_handlers()
-
-    def _setup_handlers(self) -> None:
-        @self.server.list_tools()
-        async def list_tools() -> list[Tool]:
-            return TOOLS
-
-        @self.server.call_tool()
-        async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-            if self.graphiti is None:
-                self.graphiti = await create_graph(
-                    host=os.environ.get("FALKORDB_HOST", "localhost"),
-                    port=int(os.environ.get("FALKORDB_PORT", "6379")),
-                )
-
-            handler = getattr(self, f"_handle_{name}", None)
-            if handler is None:
-                return [TextContent(type="text", text=f"Unknown tool: {name}")]
-
-            result = await handler(arguments)
-
-            self.ledger.append(
-                actor=arguments.get("actor", "system"),
-                action=f"mcp:{name}",
-                summary=f"Tool call: {name}",
-                payload={"args": arguments, "result_preview": str(result)[:200]},
-            )
-
-            return [TextContent(type="text", text=json.dumps(result, indent=2))]
-
-    async def _handle_decide(self, args: dict) -> dict:
-        episode_content = (
-            f"Decision on {args['topic']}: {args['decision']}. "
-            f"Rationale: {args['rationale']}"
-        )
-        await self.graphiti.add_episode(
-            group_id="project",
-            name=f"decision:{args['topic']}",
-            episode_body=episode_content,
-            source_description=f"Decision by {args['actor']}",
-        )
-        entry = self.ledger.append(
-            actor=args["actor"],
-            action="decision",
-            summary=args["decision"],
-            payload={"topic": args["topic"], "rationale": args["rationale"]},
-        )
-        await self.vectors.add(
-            id=entry.id,
-            text=episode_content,
-            category="decision",
-            actor=args["actor"],
-        )
-        return {"status": "recorded", "topic": args["topic"]}
-
-    async def _handle_constrain(self, args: dict) -> dict:
-        episode_content = (
-            f"Project constraint: {args['constraint']}. "
-            f"Reason: {args['reason']}"
-        )
-        await self.graphiti.add_episode(
-            group_id="project",
-            name=f"constraint:{args['constraint'][:40]}",
-            episode_body=episode_content,
-            source_description=f"Constraint set by {args['actor']}",
-        )
-        entry = self.ledger.append(
-            actor=args["actor"],
-            action="constraint",
-            summary=args["constraint"],
-            payload={"reason": args["reason"]},
-        )
-        await self.vectors.add(
-            id=entry.id,
-            text=episode_content,
-            category="constraint",
-            actor=args["actor"],
-        )
-        return {"status": "recorded", "constraint": args["constraint"]}
-
-    async def _handle_query(self, args: dict) -> dict:
-        graph_results = await self.graphiti.search(
-            group_ids=["project"],
-            query=args["question"],
-            num_results=10,
-        )
-        graph_formatted = []
-        for edge in graph_results:
-            graph_formatted.append({
-                "fact": edge.fact,
-                "source": edge.source_node_name if hasattr(edge, "source_node_name") else None,
-                "target": edge.target_node_name if hasattr(edge, "target_node_name") else None,
-                "valid_at": str(edge.valid_at) if hasattr(edge, "valid_at") else None,
-                "invalid_at": str(edge.invalid_at) if hasattr(edge, "invalid_at") else None,
-            })
-        vector_results = await self.vectors.search(args["question"], limit=5)
-        return {
-            "graph": graph_formatted,
-            "semantic": vector_results,
-            "query": args["question"],
-        }
-
-    async def _handle_log(self, args: dict) -> dict:
-        entry = self.ledger.append(
-            actor=args["actor"],
-            action=args["action"],
-            summary=args["summary"],
-            ref=args.get("ref"),
-            payload={k: v for k, v in args.items() if k not in ("actor", "action", "summary", "ref")},
-        )
-        return {"status": "logged", "entry_id": entry.id}
-
-    async def _handle_supersede(self, args: dict) -> dict:
-        episode_content = (
-            f"Superseding decision on {args['old_topic']}: "
-            f"new decision is {args['new_decision']}. "
-            f"Reason for change: {args['reason']}"
-        )
-        await self.graphiti.add_episode(
-            group_id="project",
-            name=f"supersede:{args['old_topic']}",
-            episode_body=episode_content,
-            source_description=f"Superseded by {args['actor']}",
-        )
-        self.ledger.append(
-            actor=args["actor"],
-            action="supersede",
-            summary=f"Superseded {args['old_topic']}: {args['new_decision']}",
-            payload={"old_topic": args["old_topic"], "reason": args["reason"]},
-        )
-        return {"status": "superseded", "topic": args["old_topic"]}
-
-    async def _handle_phase(self, args: dict) -> dict:
-        current_phase = _read_phase()
-        if "set_current" in args or "set_next" in args:
-            new_current = args.get("set_current", current_phase.get("current", ""))
-            new_next = args.get("set_next", current_phase.get("next", ""))
-            _write_phase(new_current, new_next)
-            self.ledger.append(
-                actor=args.get("actor", "system"),
-                action="phase_change",
-                summary=f"Phase: {new_current} -> next: {new_next}",
-            )
-            return {"current": new_current, "next": new_next, "status": "updated"}
-        return current_phase
-
-    async def _handle_history(self, args: dict) -> dict:
-        since = None
-        if "since" in args:
-            since = _parse_duration(args["since"])
-        entries = self.ledger.query(
-            actor=args.get("actor"),
-            action=args.get("action"),
-            since=since,
-            limit=args.get("limit", 50),
-        )
-        return {
-            "entries": [
-                {
-                    "id": e.id,
-                    "ts": e.ts,
-                    "actor": e.actor,
-                    "action": e.action,
-                    "summary": e.summary,
-                    "ref": e.ref,
-                }
-                for e in entries
-            ],
-            "count": len(entries),
-        }
-
-
-async def run_server() -> None:
-    naz = NazarethServer()
-    async with stdio_server() as (read_stream, write_stream):
-        await naz.server.run(read_stream, write_stream, naz.server.create_initialization_options())
-
-
-def main() -> None:
-    asyncio.run(run_server())
+def run_server() -> None:
+    build_server().run("stdio")
 
 
 if __name__ == "__main__":
-    main()
+    run_server()
