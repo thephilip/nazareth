@@ -12,8 +12,12 @@ search = [
     "model2vec>=0.4,<1",
     "numpy",
 ]
-dev = [
+graph = [
     "nazareth[search]",
+    "graphiti-core[falkordblite]>=0.31.2,<0.32",
+]
+dev = [
+    "nazareth[graph]",
     "pytest",
     "pytest-asyncio",
     "ruff",

@@ -11,6 +11,12 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Added
 
+- An optional knowledge graph: the `graph` extra adds Graphiti on embedded FalkorDB Lite.
+  `nazareth enrich [--limit N]` sends new ledger events to any OpenAI-compatible LLM
+  (`NAZARETH_LLM_BASE_URL`, `NAZARETH_LLM_API_KEY`, `NAZARETH_LLM_MODEL`) to extract facts.
+  `query` then ranks graph facts alongside keywords and vectors and returns them, with
+  their source ids, under `facts`. The graph lives in a derived `.nazareth/graph.db`,
+  deleted by `rebuild`, and no LLM is called anywhere else.
 - `nazareth init --docker [--model provider/model]`, which writes a Docker Agent team
   config (`.docker-agent/nazareth.yaml`) with a coordinator that delegates to the
   architect, code and reviewer lenses. Each agent runs its own memory server with a fixed
@@ -45,6 +51,8 @@ Nothing has been released yet. Everything below will become 0.1.0.
   longer name host-specific tools. Rerun `init --claude` after deleting
   `.claude/agents/lens-*.md` to pick up the new wording.
 - The PATH warning from `init` now covers both hosts.
+- `rebuild` also deletes the knowledge graph, and the dev extra now includes the graph
+  extra.
 - Rebuilt the memory layer ledger-first. The first scaffold's Graphiti/FalkorDB, LanceDB
   and gateway-specific configuration were dropped. Graphiti may return later as optional
   asynchronous enrichment, and LLM providers stay pluggable.

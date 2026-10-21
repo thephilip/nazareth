@@ -68,13 +68,15 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
             raise ToolError(str(e)) from e
 
     def search(text: str, include_inactive: bool, limit: int) -> dict:
-        # Loading the model (possibly downloading it) and embedding happen
-        # outside the call lock, so writes in this lens never wait on them.
-        # Only the vector store is touched there; Memory guards it separately.
+        # Loading the model (possibly downloading it), embedding and graph
+        # search happen outside the call lock, so writes in this lens never
+        # wait on them. Only the vector store and the graph are touched there;
+        # Memory guards each separately.
         mem, docs = call(lambda m: (m, m.search_documents() if m.semantic_enabled else None))
         hits = mem.semantic(text, docs)[0] if docs is not None else []
+        facts = mem.facts(text)
         return call(lambda m: m.search(text, include_inactive=include_inactive, limit=limit,
-                                       semantic=hits))
+                                       semantic=hits, facts=facts))
 
     @server.tool(annotations=READ)
     def brief() -> dict:

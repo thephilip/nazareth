@@ -14,15 +14,19 @@ Write policy (decided under the ledger lock, then recorded in the event):
 
 from __future__ import annotations
 
+import fcntl
 import re
 import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Any
 
 from nazareth.ledger.chain import Ledger, LedgerEntry
+from nazareth.memory import graph as graphs
 from nazareth.memory import vectors
 from nazareth.memory.projection import DOMAIN_ACTIONS, Projection
 from nazareth.paths import StatePaths
@@ -31,6 +35,8 @@ HUMAN = "human"
 BRIEF_DECISION_LIMIT = 100
 SEARCH_CANDIDATES = 200
 VECTOR_CANDIDATES = 50
+GRAPH_FACTS = 20
+FACTS_SHOWN = 5
 
 _DEFAULT: Any = object()
 
@@ -110,9 +116,12 @@ def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
 
 class Memory:
     """`embedder` defaults to the search extra's model when it's installed; pass
-    None for keyword search only, or any `vectors.Embedder`."""
+    None for keyword search only, or any `vectors.Embedder`. `graph` opens a
+    `graphs.Graph` (called with whether it will write); by default Graphiti is
+    used when the graph extra is installed."""
 
-    def __init__(self, paths: StatePaths, embedder: Any = _DEFAULT) -> None:
+    def __init__(self, paths: StatePaths, embedder: Any = _DEFAULT,
+                 graph: Callable[[bool], graphs.Graph] | None | Any = _DEFAULT) -> None:
         if not paths.initialized:
             raise NazarethError(
                 f"Nazareth isn't initialized for {paths.project}. "
@@ -132,16 +141,96 @@ class Memory:
         self.vector_error: str | None = None
         # Why the last inline search here fell back to keywords, if it did.
         self.vector_note: str | None = None
+        self._open_graph = self._default_graph if graph is _DEFAULT else graph
+        self._graph: graphs.Graph | None = None
+        self._graph_lock = threading.Lock()
+        self.graph_error: str | None = None
+
+    def _default_graph(self, write: bool) -> graphs.Graph:
+        if not graphs.graph_extra_installed():
+            raise graphs.GraphUnavailable("graph extra not installed")
+        return graphs.GraphitiGraph(self.paths.graph, self.embedder,
+                                    llm=graphs.llm_settings() if write else None)
 
     def close(self) -> None:
         self.index.close()
         self.vectors.close()
+        with self._graph_lock:
+            if self._graph is not None:
+                self._graph.close()
+                self._graph = None
 
     def rebuild(self) -> None:
-        """Replay the index from the ledger and drop the derived vectors."""
+        """Replay the index from the ledger and drop the derived vectors and graph."""
         self.index.rebuild()
         with self._vector_lock:
             self.vectors.reset()
+        if self.paths.graph.exists() and self._open_graph is not None:
+            with self._enrich_lock(), self._graph_lock:
+                try:
+                    g = self._graph or self._open_graph(False)
+                    getattr(g, "reset", lambda: None)()
+                    g.close()
+                except graphs.GraphUnavailable:
+                    pass
+                self._graph = None
+                for path in self.paths.state.glob("graph.db*"):
+                    path.unlink(missing_ok=True)
+
+    @contextmanager
+    def _enrich_lock(self) -> Iterator[None]:
+        with open(self.paths.graph_lock, "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+
+    def enrich(self, limit: int | None = None,
+               progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
+        """Send ledger events the graph hasn't seen to Graphiti (`nazareth
+        enrich`), oldest first, at most `limit` of them. This is the only call
+        that reaches an LLM, and it is never made on the write path."""
+        if self._open_graph is None:
+            raise NazarethError("The knowledge graph is turned off for this process.")
+        self.index.sync()
+        self.paths.ensure_gitignore()
+        with self._enrich_lock(), self._graph_lock:
+            try:
+                g = self._open_graph(True)
+            except graphs.GraphUnavailable as e:
+                raise NazarethError(
+                    f"Knowledge graph unavailable: {e}. Install the extra with "
+                    "pip install 'nazareth[graph]' and see the README for the LLM settings."
+                ) from e
+            try:
+                mark = g.watermark()
+                if mark is not None:
+                    seen = self.ledger.entries(after_seq=mark[0] - 1)[:1]
+                    if not seen or seen[0].hash != mark[1]:
+                        raise NazarethError(
+                            "The knowledge graph doesn't match this ledger (it was built from a "
+                            "different history). Run `nazareth rebuild`, then `nazareth enrich`.")
+                todo = self.ledger.entries(after_seq=mark[0] if mark else -1)
+                sent, done = 0, 0
+                for e in todo:
+                    ep = graphs.episode(e, self._kind_of)
+                    if ep is not None:
+                        if limit is not None and sent >= limit:
+                            break
+                        g.add(ep)
+                        sent += 1
+                    g.set_watermark(e.seq, e.hash)
+                    done += 1
+                    if progress is not None:
+                        progress(done, len(todo))
+            finally:
+                g.close()
+        return {"sent": sent, "remaining": len(todo) - done}
+
+    def _kind_of(self, rid: str) -> str | None:
+        row = self.index.record(rid)
+        return row["kind"] if row is not None else None
 
     def embed(self) -> dict[str, Any]:
         """Bring the vector store up to date (`nazareth embed`)."""
@@ -467,18 +556,44 @@ class Memory:
             return [], f"{type(e).__name__}: {e}"
         return [(rid, kind) for rid, kind, _ in hits], None
 
+    def facts(self, text: str) -> list[graphs.Fact]:
+        """Knowledge graph facts about `text`, once `nazareth enrich` has built
+        the graph. Touches only the graph, never the index, so it is safe to run
+        without the caller's index lock. Never fails a search: if the graph
+        can't be opened it's off for this process; other errors skip it once."""
+        if self._open_graph is None or self.graph_error is not None or not text.strip():
+            return []
+        if not self.paths.graph.exists():
+            return []
+        try:
+            with self._graph_lock:
+                if self._graph is None:
+                    self._graph = self._open_graph(False)
+                return self._graph.search(text, GRAPH_FACTS)
+        except graphs.GraphUnavailable as e:
+            self.graph_error = str(e) or type(e).__name__
+        except Exception:  # noqa: BLE001 - never fail a search over enrichment
+            return []
+        return []
+
     def search(self, text: str, include_inactive: bool = False, limit: int = 10,
-               semantic: list[tuple[str, str]] | None = None) -> dict[str, Any]:
-        """Keyword (FTS5) and, when available, vector search, fused by
-        reciprocal rank. Pass `semantic` (from `semantic()`) to reuse hits
-        computed elsewhere, e.g. outside a lock; otherwise they're computed here."""
+               semantic: list[tuple[str, str]] | None = None,
+               facts: list[graphs.Fact] | None = None) -> dict[str, Any]:
+        """Keyword (FTS5) and, when available, vector and knowledge graph
+        search, fused by reciprocal rank. Pass `semantic` (from `semantic()`)
+        and `facts` (from `facts()`) to reuse results computed elsewhere, e.g.
+        outside a lock; otherwise they're computed here."""
         self.index.sync()
         records, questions, events = [], [], []
         keyword = self.index.search(text, limit=SEARCH_CANDIDATES)
         if semantic is None:
             semantic, self.vector_note = self.semantic(text, self.index.documents()) \
                 if self.semantic_enabled else ([], self.vector_error)
-        ranked = vectors.rrf(keyword, semantic) if semantic else keyword
+        if facts is None:
+            facts = self.facts(text)
+        from_graph = list(dict.fromkeys(src for f in facts for src in f.sources))
+        rankings = [r for r in (keyword, semantic, from_graph) if r]
+        ranked = vectors.rrf(*rankings) if len(rankings) > 1 else (rankings or [[]])[0]
         for rid, kind in ranked:
             if kind in ("decision", "constraint") and len(records) < limit:
                 row = self.index.record(rid)
@@ -499,7 +614,11 @@ class Memory:
                 ev = self.index.event(rid)
                 if ev is not None:
                     events.append(_event_out(ev))
-        return {"records": records, "questions": questions, "events": events}
+        out: dict[str, Any] = {"records": records, "questions": questions, "events": events}
+        if facts:
+            out["facts"] = [{"fact": f.text, "sources": [rid for rid, _ in f.sources]}
+                            for f in facts[:FACTS_SHOWN]]
+        return out
 
     def history(self, since: str | None = None, actor: str | None = None,
                 action: str | None = None, limit: int = 50) -> dict[str, Any]:

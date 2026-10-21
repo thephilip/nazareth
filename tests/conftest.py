@@ -88,3 +88,15 @@ class GatedEmbedder(FakeEmbedder):
         self.started.set()
         assert self.release.wait(10), "test never released the embedder"
         return super().embed(texts)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never open Graphiti by default; tests that want a graph inject FakeGraph."""
+    from nazareth.memory import graph
+    from nazareth.memory.service import Memory
+
+    def unavailable(self, write: bool):
+        raise graph.GraphUnavailable("graph disabled in tests")
+
+    monkeypatch.setattr(Memory, "_default_graph", unavailable)

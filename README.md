@@ -64,6 +64,30 @@ Without the extra, or if the model can't be loaded (for example offline on first
 `query` quietly uses keyword search alone. The CLI prints one line to stderr when that
 happens; agents just get keyword results.
 
+### Knowledge graph (optional)
+
+```bash
+uv tool install -e '.[graph]'    # or: pip install 'nazareth[graph]'  (includes search)
+export NAZARETH_LLM_BASE_URL=https://your-endpoint/v1   # any OpenAI-compatible API
+export NAZARETH_LLM_MODEL=your-model
+export NAZARETH_LLM_API_KEY=...                         # e.g. $(security find-generic-password -s <name> -w)
+nazareth enrich --limit 20       # send up to 20 new ledger events; rerun to continue
+```
+
+The `graph` extra adds [Graphiti](https://github.com/getzep/graphiti) on embedded
+FalkorDB Lite. `nazareth enrich` sends each ledger event the graph hasn't seen, oldest
+first, to your LLM. The LLM extracts entities and facts, and Graphiti tracks how they
+change over time. This is the only command that calls an LLM. Writes, `query` and the lens
+servers never do. Embeddings come from the `search` extra's local model, nothing is
+reranked by a model, and Graphiti's telemetry is turned off.
+
+Once the graph exists, `query` adds its facts as a third ranked source next to keywords
+and vectors, and returns up to five of them under `facts`, each with the ids of the
+records it came from. The graph is derived and never authoritative: it lives in
+`.nazareth/graph.db` (gitignored), and `rebuild` deletes it. If an `enrich` run is
+interrupted, the next run picks up where it stopped. Facts Graphiti marks as invalidated,
+such as a superseded choice, are left out.
+
 ### Claude Code
 
 ```bash
@@ -145,6 +169,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `verify` | Check the hash chain |
 | `rebuild` | Regenerate the index from the ledger and reset vectors |
 | `embed` | Compute semantic search vectors now (needs the `search` extra) |
+| `enrich [--limit N]` | Send new ledger events to the knowledge graph (needs the `graph` extra; calls your LLM) |
 | `serve` | Run the MCP server (stdio) |
 | `context` | Memory snapshot for agent session start (used by the hook) |
 
@@ -153,7 +178,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | Tool | Purpose |
 |---|---|
 | `brief` | Phase, constraints, active decisions, pending items, questions, recent activity |
-| `query` | Search (keyword, plus semantic with the `search` extra), or read one item by id |
+| `query` | Search (keyword, plus semantic and knowledge graph facts with the extras), or read one item by id |
 | `decide` | Record a decision; `supersedes` replaces earlier ones |
 | `constrain` | Record a non-negotiable constraint |
 | `ask` | Leave a question for the human |
@@ -169,6 +194,8 @@ non-destructive.
 | Variable | Description | Default |
 |---|---|---|
 | `NAZARETH_PROJECT_DIR` | Project root | nearest `.nazareth/`, else git root, else the start dir (`CLAUDE_PROJECT_DIR` under Claude Code, otherwise cwd) |
+| `NAZARETH_LLM_BASE_URL`, `NAZARETH_LLM_API_KEY`, `NAZARETH_LLM_MODEL` | OpenAI-compatible endpoint, key and model for `enrich` (and for the Docker Agent provider example) | unset |
+| `NAZARETH_LLM_SMALL_MODEL` | Model for Graphiti's lighter prompts | `NAZARETH_LLM_MODEL` |
 | `NAZARETH_ACTOR` | Fixed actor for a server's writes; the tools' `actor` argument is ignored when set, and `human` is refused | `agent` |
 
 ## State layout
@@ -178,6 +205,7 @@ non-destructive.
 ├── ledger.jsonl    # source of truth (hash-chained, append-only)
 ├── index.db        # SQLite projection: records, links, questions, FTS (derived, gitignored)
 ├── vectors.db      # embeddings for semantic search (derived, gitignored; `search` extra)
+├── graph.db        # knowledge graph, FalkorDB Lite (derived, gitignored; `graph` extra)
 └── .gitignore
 ```
 
@@ -192,6 +220,9 @@ non-destructive.
   being explored. Tracked as q-0bfe36.
 - **Docker Agent `--sandbox` is untested.** The generated config expects `nazareth` on the
   host PATH; inside a sandbox it may not be there.
+- **Enrichment is slow and LLM-bound.** Graphiti makes several LLM calls per event. With a
+  reasoning model, expect about a minute per event, so use `--limit` and run it when it
+  suits you. Small local models often break Graphiti's structured output.
 - **`rebuild` while servers are running.** Other running servers keep searching the
   deleted vector store until they restart. Results stay correct; restart them to free it.
 
@@ -207,4 +238,4 @@ See [CHANGELOG.md](CHANGELOG.md).
 4. ~~Docker Agent lenses~~, routing by coordinator delegation (`transfer_task`). Routing
    hooks and choice evaluators were left out: delegation covers the MVP, and evaluators
    need extra hosted endpoints. A model router comes later
-5. Graphiti as an optional, asynchronous enrichment layer
+5. ~~Graphiti as an optional enrichment layer~~ (`nazareth enrich`)

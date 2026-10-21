@@ -167,7 +167,7 @@ def test_init_gitignores_vectors(tmp_path: Path) -> None:
     (p.state / ".gitignore").write_text("index.db*\n*.lock")  # older layout
     p.init()
     lines = (p.state / ".gitignore").read_text().splitlines()
-    assert lines == ["index.db*", "*.lock", "vectors.db*"]
+    assert lines == ["index.db*", "*.lock", "vectors.db*", "graph.db*"]
 
 
 def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -190,7 +190,7 @@ def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> N
     assert captured.err == ""
 
     main(["--dir", str(tmp_path), "rebuild"])
-    assert "vectors reset" in capsys.readouterr().out
+    assert "vectors and graph reset" in capsys.readouterr().out
     assert not (tmp_path / ".nazareth" / "vectors.db").exists()
 
 
@@ -236,7 +236,7 @@ def test_creating_vectors_db_gitignores_it_in_older_projects(paths: StatePaths) 
     mem.search("ledger")
     assert paths.vectors.exists()
     assert gitignore.read_text() == (
-        "index.db*\n*.lock\n# keep: my notes\nnotes.txt\nvectors.db*\n")
+        "index.db*\n*.lock\n# keep: my notes\nnotes.txt\nvectors.db*\ngraph.db*\n")
     mem.rebuild()
     mem.search("ledger")  # recreated: nothing appended twice
     assert gitignore.read_text().count("vectors.db*") == 1

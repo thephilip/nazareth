@@ -118,12 +118,24 @@ def cmd_verify(args: argparse.Namespace) -> None:
 def cmd_rebuild(args: argparse.Namespace) -> None:
     mem = _memory(args)
     mem.rebuild()
-    print(f"Rebuilt index from {len(mem.ledger)} ledger entries; vectors reset.")
+    print(f"Rebuilt index from {len(mem.ledger)} ledger entries; vectors and graph reset.")
 
 
 def cmd_embed(args: argparse.Namespace) -> None:
     out = _memory(args).embed()
     print(f"{out['count']} items embedded with {out['embedder']} ({out['embedded']} new).")
+
+
+def cmd_enrich(args: argparse.Namespace) -> None:
+    def progress(done: int, total: int) -> None:
+        print(f"\r  {done}/{total} ledger events", end="", file=sys.stderr, flush=True)
+
+    try:
+        out = _memory(args).enrich(limit=args.limit, progress=progress)
+    finally:
+        print(file=sys.stderr)
+    more = f"; {out['remaining']} left, run again to continue" if out["remaining"] else ""
+    print(f"Sent {out['sent']} ledger events to the knowledge graph{more}.")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -264,6 +276,9 @@ def build_parser() -> argparse.ArgumentParser:
     add("verify", cmd_verify, "check the ledger hash chain")
     add("rebuild", cmd_rebuild, "rebuild the index from the ledger and reset vectors")
     add("embed", cmd_embed, "compute semantic search vectors now (needs the search extra)")
+    add("enrich", cmd_enrich,
+        "send new ledger events to the knowledge graph (graph extra; calls your LLM)"
+        ).add_argument("--limit", type=int, help="send at most this many events")
 
     p = add("decide", cmd_decide, "record a decision as the human")
     p.add_argument("topic")

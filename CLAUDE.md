@@ -12,6 +12,9 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
   - `memory/vectors.py` — Optional semantic search (`search` extra): `Embedder` protocol,
     model2vec embedder, `VectorStore` over `.nazareth/vectors.db` (derived, lazily synced at
     query time), reciprocal rank fusion with FTS5
+  - `memory/graph.py` — Optional knowledge graph (`graph` extra): ledger events as Graphiti
+    episodes on embedded FalkorDB Lite (`.nazareth/graph.db`), written only by
+    `nazareth enrich`; graph facts feed `query`'s rank fusion
   - `server.py` — MCP server (8 tools: brief, query, decide, constrain, ask, log, phase, history)
   - `cli.py` — Human CLI (`nazareth status`, `answer`, `resolve`, …)
   - `paths.py` — Finds the project's `.nazareth/` state dir
@@ -28,7 +31,7 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
 
 ```bash
 source .venv/bin/activate
-pip install -e ".[dev]"   # includes the search extra; tests use a fake embedder, no network
+pip install -e ".[dev]"   # includes the search and graph extras; tests use fakes, no network
 pytest
 ruff check src tests
 ```

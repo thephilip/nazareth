@@ -10,7 +10,7 @@ STATE_DIRNAME = ".nazareth"
 
 # Derived files are rebuildable from the ledger, so they never belong in git.
 # Whether to commit the ledger itself is left to the project.
-_STATE_GITIGNORE = "index.db*\nvectors.db*\n*.lock\n"
+_STATE_GITIGNORE = "index.db*\nvectors.db*\ngraph.db*\n*.lock\n"
 
 
 def find_project_dir(start: Path | None = None) -> Path:
@@ -49,6 +49,14 @@ class StatePaths:
     @property
     def vectors(self) -> Path:
         return self.state / "vectors.db"
+
+    @property
+    def graph(self) -> Path:
+        return self.state / "graph.db"
+
+    @property
+    def graph_lock(self) -> Path:
+        return self.state / "graph.lock"
 
     @property
     def initialized(self) -> bool:
