@@ -1,0 +1,32 @@
+[project]
+name = "nazareth"
+version = "0.1.0"
+description = "Agent-native memory layer and lens orchestration for local agentic coding workflows"
+requires-python = ">=3.12"
+dependencies = [
+    "graphiti-core[falkordb]",
+    "lancedb",
+    "mcp",
+    "httpx",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff",
+]
+
+[project.scripts]
+nazareth = "nazareth.cli:main"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
