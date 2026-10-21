@@ -29,6 +29,9 @@ It is built for agents first. Lenses talk to it over MCP; the human steers from 
 - **Conflicts go to the human.** A decision on a topic that already has an active
   decision, without superseding it, is held as *pending*. So is a lens trying to override
   something the human decided.
+- **Fixed identities.** A server started with `NAZARETH_ACTOR` writes as that actor and
+  ignores the tools' `actor` argument, and nobody writes as `human` over MCP: the human
+  writes through the CLI. A lens can't pose as another lens or as you.
 - **Deterministic and fast.** No LLM sits on the write path; a call takes milliseconds.
 - **Safe with many writers.** Each lens runs its own server process; appends take a file
   lock and re-read the chain head, so concurrent writers never fork it.
@@ -36,7 +39,7 @@ It is built for agents first. Lenses talk to it over MCP; the human steers from 
 ## Quick start
 
 ```bash
-pip install -e .
+uv tool install -e .   # or: pipx install -e .  (puts `nazareth` on PATH)
 cd your-project
 nazareth init          # creates .nazareth/ (ledger + derived index)
 nazareth status
@@ -55,7 +58,17 @@ This adds, without overwriting anything that already exists:
   nazareth tools so it can't write under the wrong identity.
 - `.mcp.json`: the `nazareth` server for the main session (actor `agent:main`).
 - `.claude/settings.json`: a `SessionStart` hook running `nazareth context`, which injects
-  the phase, constraints and active decisions at startup, resume, clear and compaction.
+  the phase, constraints, active decisions and anything waiting on you at startup, resume,
+  clear and compaction. Long lists are trimmed with a pointer to `query`, so the
+  pending-work warning always fits.
+
+It checks `.mcp.json` and `.claude/settings.json` before writing anything; if either isn't
+valid JSON, or isn't shaped as expected, it stops and changes nothing.
+
+Claude Code runs the bare `nazareth` command for the hook and every server, so it must be
+on your PATH, not only inside a virtualenv. `init --claude` warns if it's missing or if
+PATH has a different installation. Commit the generated files so a fresh clone gets the
+lenses and hook; `.claude/settings.local.json` is per-user and stays out of git.
 
 Lens subagents' own servers only load in folders you've trusted in Claude Code, and Claude
 Code asks you to approve `.mcp.json` servers the first time.
@@ -97,8 +110,8 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 
 | Variable | Description | Default |
 |---|---|---|
-| `NAZARETH_PROJECT_DIR` | Project root | nearest `.nazareth/`, else git root, else cwd |
-| `NAZARETH_ACTOR` | Default actor for a server's writes | `agent` |
+| `NAZARETH_PROJECT_DIR` | Project root | nearest `.nazareth/`, else git root, else the start dir (`CLAUDE_PROJECT_DIR` under Claude Code, otherwise cwd) |
+| `NAZARETH_ACTOR` | Fixed actor for a server's writes; the tools' `actor` argument is ignored when set, and `human` is refused | `agent` |
 
 ## State layout
 
