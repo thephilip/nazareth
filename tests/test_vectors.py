@@ -12,7 +12,7 @@ from nazareth.memory import vectors
 from nazareth.memory.service import Memory, NazarethError
 from nazareth.memory.vectors import VectorStore, rrf
 from nazareth.paths import StatePaths
-from tests.conftest import BrokenEmbedder, FakeEmbedder
+from tests.conftest import BrokenEmbedder, FakeEmbedder, FlakyEmbedder
 
 ARCH = "lens:architect"
 
@@ -204,3 +204,46 @@ def test_query_cli_notes_fallback_once(tmp_path: Path, capsys,
     captured = capsys.readouterr()
     assert len(json.loads(captured.out)["records"]) == 1
     assert captured.err.count("\n") == 1 and "keyword search only" in captured.err
+
+
+def test_load_failure_disables_vectors_for_the_process(paths: StatePaths) -> None:
+    broken = BrokenEmbedder()
+    mem = Memory(paths, embedder=broken)
+    _seed(mem)
+    mem.search("sqlite")
+    mem.search("sqlite")
+    assert broken.calls == 1 and not mem.semantic_enabled
+    assert "ConnectionError" in mem.vector_note
+    mem.close()
+
+
+def test_transient_failure_affects_only_that_search(paths: StatePaths) -> None:
+    mem = Memory(paths, embedder=FlakyEmbedder())
+    ids = _seed(mem)
+    assert mem.search("identity")["records"] == []  # keyword-only this once
+    assert "database is locked" in mem.vector_note
+    assert mem.vector_error is None and mem.semantic_enabled
+    assert [r["id"] for r in mem.search("identity")["records"]] == [ids["identity"]]
+    assert mem.vector_note is None
+    mem.close()
+
+
+def test_creating_vectors_db_gitignores_it_in_older_projects(paths: StatePaths) -> None:
+    gitignore = paths.state / ".gitignore"
+    gitignore.write_text("index.db*\n*.lock\n# keep: my notes\nnotes.txt")
+    mem = Memory(paths, embedder=FakeEmbedder())
+    _seed(mem)
+    mem.search("ledger")
+    assert paths.vectors.exists()
+    assert gitignore.read_text() == (
+        "index.db*\n*.lock\n# keep: my notes\nnotes.txt\nvectors.db*\n")
+    mem.rebuild()
+    mem.search("ledger")  # recreated: nothing appended twice
+    assert gitignore.read_text().count("vectors.db*") == 1
+    mem.close()
+
+
+def test_ensure_gitignore_never_creates_state(tmp_path: Path) -> None:
+    p = StatePaths(tmp_path)
+    p.ensure_gitignore()
+    assert not p.state.exists()

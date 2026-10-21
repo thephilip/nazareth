@@ -61,6 +61,15 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         except NazarethError as e:
             raise ToolError(str(e)) from e
 
+    def search(text: str, include_inactive: bool, limit: int) -> dict:
+        # Loading the model (possibly downloading it) and embedding happen
+        # outside the call lock, so writes in this lens never wait on them.
+        # Only the vector store is touched there; Memory guards it separately.
+        mem, docs = call(lambda m: (m, m.search_documents() if m.semantic_enabled else None))
+        hits = mem.semantic(text, docs)[0] if docs is not None else []
+        return call(lambda m: m.search(text, include_inactive=include_inactive, limit=limit,
+                                       semantic=hits))
+
     @server.tool()
     def brief() -> dict:
         """Orient yourself: current phase, all active constraints, all active
@@ -81,7 +90,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         if id:
             return call(lambda m: m.get(id))
         if text:
-            return call(lambda m: m.search(text, include_inactive=include_inactive, limit=limit))
+            return search(text, include_inactive, limit)
         raise ToolError("Pass `text` to search or `id` to read one item.")
 
     @server.tool()

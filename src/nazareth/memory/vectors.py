@@ -13,7 +13,8 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import sqlite3
-from collections.abc import Iterable, Sequence
+import threading
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
@@ -64,8 +65,13 @@ class Model2VecEmbedder:
         self.model_id = model_id
         self.name = f"model2vec:{model_id}"
         self._model = None
+        self._lock = threading.Lock()
 
     def _load(self):
+        with self._lock:
+            return self._load_locked()
+
+    def _load_locked(self):
         if self._model is None:
             try:
                 from huggingface_hub import snapshot_download
@@ -117,13 +123,16 @@ def _normalize(m: np.ndarray) -> np.ndarray:
 class VectorStore:
     """SQLite table of (id, kind, embedder, text hash, float32 vector)."""
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, on_create: Callable[[], None] | None = None) -> None:
         self.path = path
+        self._on_create = on_create
         self._db: sqlite3.Connection | None = None
 
     @property
     def db(self) -> sqlite3.Connection:
         if self._db is None:
+            if self._on_create is not None and not self.path.exists():
+                self._on_create()
             self._db = sqlite3.connect(self.path, timeout=30, isolation_level=None,
                                        check_same_thread=False)
             self._db.execute("PRAGMA journal_mode=WAL")

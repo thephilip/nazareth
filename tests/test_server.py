@@ -196,3 +196,34 @@ def test_parallel_calls_on_one_server(paths: StatePaths) -> None:
     results = _run(paths, steps)
     assert [r for r in results if "error" in r] == []
     assert len(Memory(paths).history(limit=100)["entries"]) >= 16
+
+
+def test_writes_do_not_wait_for_the_embedding_model(paths: StatePaths, monkeypatch) -> None:
+    from nazareth.memory import vectors
+    from tests.conftest import GatedEmbedder
+
+    gated = GatedEmbedder()
+    monkeypatch.setattr(vectors, "default_embedder", lambda: gated)
+
+    async def steps(client):
+        await _call(client, "decide", topic="lens-actor", decision="Fixed NAZARETH_ACTOR",
+                    rationale="no posing")
+        out = {}
+
+        async def search():
+            out["query"] = await _call(client, "query", text="identity")
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(search)
+            assert await anyio.to_thread.run_sync(gated.started.wait, 5)
+            with anyio.fail_after(5):  # the "model" is still loading
+                out["log"] = await _call(client, "log", action="finding", summary="mid-load")
+                out["brief"] = await _call(client, "brief")
+            out["query_done_before_release"] = "query" in out
+            gated.release.set()
+        return out
+
+    out = _run(paths, steps)
+    assert "error" not in out["log"] and "error" not in out["brief"]
+    assert out["query_done_before_release"] is False
+    assert [r["topic"] for r in out["query"]["records"]] == ["lens-actor"]

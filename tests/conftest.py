@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import re
+import sqlite3
+import threading
 
 import numpy as np
 import pytest
@@ -47,7 +49,11 @@ class BrokenEmbedder:
     name = "broken"
     dim = 8
 
+    def __init__(self) -> None:
+        self.calls = 0
+
     def embed(self, texts: list[str]) -> np.ndarray:
+        self.calls += 1
         raise vectors.EmbedderUnavailable("can't load model: ConnectionError")
 
 
@@ -55,3 +61,30 @@ class BrokenEmbedder:
 def _no_real_embedder(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default to keyword-only search; tests that want vectors inject FakeEmbedder."""
     monkeypatch.setattr(vectors, "default_embedder", lambda: None)
+
+
+class FlakyEmbedder(FakeEmbedder):
+    """Fails its first `failures` calls with a transient error, then works."""
+
+    def __init__(self, failures: int = 1) -> None:
+        super().__init__()
+        self.failures = failures
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        if self.failures:
+            self.failures -= 1
+            raise sqlite3.OperationalError("database is locked")
+        return super().embed(texts)
+
+
+class GatedEmbedder(FakeEmbedder):
+    """Blocks its first call until released, like a model still downloading."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.started, self.release = threading.Event(), threading.Event()
+
+    def embed(self, texts: list[str]) -> np.ndarray:
+        self.started.set()
+        assert self.release.wait(10), "test never released the embedder"
+        return super().embed(texts)

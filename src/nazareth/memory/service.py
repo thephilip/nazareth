@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 import time
 import uuid
 from datetime import datetime
@@ -123,9 +124,14 @@ class Memory:
         self.index.sync()
         self.embedder: vectors.Embedder | None = (
             vectors.default_embedder() if embedder is _DEFAULT else embedder)
-        self.vectors = vectors.VectorStore(paths.vectors)
-        # Why semantic search was switched off for this process, if it was.
+        self.vectors = vectors.VectorStore(paths.vectors, on_create=paths.ensure_gitignore)
+        # The vector store has its own connection and lock, so semantic work
+        # (model load, embedding) can run while other calls use the index.
+        self._vector_lock = threading.Lock()
+        # Why semantic search is off for this process (the embedder can't load).
         self.vector_error: str | None = None
+        # Why the last inline search here fell back to keywords, if it did.
+        self.vector_note: str | None = None
 
     def close(self) -> None:
         self.index.close()
@@ -134,7 +140,8 @@ class Memory:
     def rebuild(self) -> None:
         """Replay the index from the ledger and drop the derived vectors."""
         self.index.rebuild()
-        self.vectors.reset()
+        with self._vector_lock:
+            self.vectors.reset()
 
     def embed(self) -> dict[str, Any]:
         """Bring the vector store up to date (`nazareth embed`)."""
@@ -143,12 +150,14 @@ class Memory:
                 "Semantic search isn't installed. Install the extra: pip install 'nazareth[search]'."
             )
         self.index.sync()
+        docs = self.index.documents()
         try:
-            embedded = self.vectors.sync(self.index.documents(), self.embedder)
+            with self._vector_lock:
+                embedded = self.vectors.sync(docs, self.embedder)
+                count = self.vectors.count()
         except vectors.EmbedderUnavailable as e:
             raise NazarethError(f"Semantic search unavailable: {e}.") from e
-        return {"embedder": self.embedder.name, "count": self.vectors.count(),
-                "embedded": embedded}
+        return {"embedder": self.embedder.name, "count": count, "embedded": embedded}
 
     # -- internals ------------------------------------------------------------
 
@@ -424,30 +433,51 @@ class Memory:
             return out
         raise NazarethError(f"Nothing with id {item_id!r}.")
 
-    def _semantic(self, text: str) -> list[tuple[str, str]]:
-        """Vector neighbours of `text`, embedding anything not yet embedded.
-        Any failure turns semantic search off for this process, silently:
-        keyword results are still correct, just less forgiving."""
-        if self.embedder is None or self.vector_error is not None or not text.strip():
-            return []
-        try:
-            self.vectors.sync(self.index.documents(), self.embedder)
-            hits = self.vectors.nearest(
-                text, self.embedder, limit=VECTOR_CANDIDATES,
-                min_similarity=getattr(self.embedder, "min_similarity", 0.0))
-        except Exception as e:  # noqa: BLE001 - never fail a search over enrichment
-            self.vector_error = str(e) or type(e).__name__
-            return []
-        return [(rid, kind) for rid, kind, _ in hits]
+    @property
+    def semantic_enabled(self) -> bool:
+        return self.embedder is not None and self.vector_error is None
 
-    def search(self, text: str, include_inactive: bool = False,
-               limit: int = 10) -> dict[str, Any]:
+    def search_documents(self) -> list[tuple[str, str, str]]:
+        """The corpus to embed. Uses the index connection, so callers sharing
+        this Memory across threads must hold their lock."""
+        self.index.sync()
+        return self.index.documents()
+
+    def semantic(self, text: str,
+                 docs: list[tuple[str, str, str]]) -> tuple[list[tuple[str, str]], str | None]:
+        """Vector neighbours of `text` as (id, kind), after embedding any of
+        `docs` not yet embedded, plus why it fell back to nothing, if it did.
+
+        Touches only the embedder and the vector store, never the index, so it
+        is safe to run without the caller's index lock. If the embedder can't
+        load, semantic search is off for the life of this process; any other
+        failure (e.g. a locked database) only affects this one search."""
+        if not self.semantic_enabled or not text.strip():
+            return [], self.vector_error
+        try:
+            with self._vector_lock:
+                self.vectors.sync(docs, self.embedder)
+                hits = self.vectors.nearest(
+                    text, self.embedder, limit=VECTOR_CANDIDATES,
+                    min_similarity=getattr(self.embedder, "min_similarity", 0.0))
+        except vectors.EmbedderUnavailable as e:
+            self.vector_error = str(e) or type(e).__name__
+            return [], self.vector_error
+        except Exception as e:  # noqa: BLE001 - never fail a search over enrichment
+            return [], f"{type(e).__name__}: {e}"
+        return [(rid, kind) for rid, kind, _ in hits], None
+
+    def search(self, text: str, include_inactive: bool = False, limit: int = 10,
+               semantic: list[tuple[str, str]] | None = None) -> dict[str, Any]:
         """Keyword (FTS5) and, when available, vector search, fused by
-        reciprocal rank."""
+        reciprocal rank. Pass `semantic` (from `semantic()`) to reuse hits
+        computed elsewhere, e.g. outside a lock; otherwise they're computed here."""
         self.index.sync()
         records, questions, events = [], [], []
         keyword = self.index.search(text, limit=SEARCH_CANDIDATES)
-        semantic = self._semantic(text)
+        if semantic is None:
+            semantic, self.vector_note = self.semantic(text, self.index.documents()) \
+                if self.semantic_enabled else ([], self.vector_error)
         ranked = vectors.rrf(keyword, semantic) if semantic else keyword
         for rid, kind in ranked:
             if kind in ("decision", "constraint") and len(records) < limit:

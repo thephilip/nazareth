@@ -202,8 +202,8 @@ def cmd_query(args: argparse.Namespace) -> None:
         _print_json(mem.get(args.text))
     else:
         _print_json(mem.search(args.text, include_inactive=args.all, limit=args.limit))
-        if mem.vector_error:
-            print(f"nazareth: keyword search only ({mem.vector_error})", file=sys.stderr)
+        if mem.vector_note:
+            print(f"nazareth: keyword search only ({mem.vector_note})", file=sys.stderr)
 
 
 def cmd_history(args: argparse.Namespace) -> None:

@@ -56,10 +56,18 @@ class StatePaths:
 
     def init(self) -> None:
         self.state.mkdir(parents=True, exist_ok=True)
+        self.ensure_gitignore()
+
+    def ensure_gitignore(self) -> None:
+        """Make sure .nazareth/.gitignore covers every derived file, appending
+        only the missing patterns. Never creates the state dir itself."""
+        if not self.initialized:
+            return
         gitignore = self.state / ".gitignore"
         existing = gitignore.read_text() if gitignore.exists() else ""
-        lines = existing.splitlines()
+        lines = {line.strip() for line in existing.splitlines()}
         missing = [p for p in _STATE_GITIGNORE.splitlines() if p not in lines]
         if missing:
             sep = "\n" if existing and not existing.endswith("\n") else ""
-            gitignore.write_text(existing + sep + "".join(f"{p}\n" for p in missing))
+            with gitignore.open("a") as f:
+                f.write(sep + "".join(f"{p}\n" for p in missing))
