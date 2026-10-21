@@ -183,8 +183,9 @@ def cmd_retire(args: argparse.Namespace) -> None:
 
 def cmd_phase(args: argparse.Namespace) -> None:
     mem = _memory(args)
-    if args.current or args.next:
-        ph = mem.set_phase(HUMAN, current=args.current, next_phase=args.next)
+    current = args.current or args.phase
+    if current or args.next:
+        ph = mem.set_phase(HUMAN, current=current, next_phase=args.next)
     else:
         ph = mem.phase()
     print(f"{ph['current']} → next: {ph['next']}")
@@ -267,6 +268,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--why", required=True)
 
     p = add("phase", cmd_phase, "show or set the project phase")
+    p.add_argument("phase", nargs="?", help="set the current phase (same as --current)")
     p.add_argument("--current")
     p.add_argument("--next")
 

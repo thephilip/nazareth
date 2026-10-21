@@ -53,6 +53,7 @@ def test_human_workflow(tmp_path: Path, capsys) -> None:
     con = json.loads(run(tmp_path, capsys, "constrain", "Python only", "--why", "skills"))
     assert "retired" in run(tmp_path, capsys, "retire", con["id"], "--why", "changed")
     assert "mvp" in run(tmp_path, capsys, "phase", "--current", "mvp")
+    assert "dogfood" in run(tmp_path, capsys, "phase", "dogfood", "--next", "search")
 
     out = run(tmp_path, capsys, "status")
     assert "NEEDS YOU: nothing" in out
