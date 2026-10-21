@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "nazareth": {
+      "command": "nazareth",
+      "args": [
+        "serve"
+      ],
+      "env": {
+        "NAZARETH_ACTOR": "agent:main"
+      }
+    }
+  }
+}
