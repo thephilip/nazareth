@@ -103,8 +103,13 @@ def cmd_verify(args: argparse.Namespace) -> None:
 
 def cmd_rebuild(args: argparse.Namespace) -> None:
     mem = _memory(args)
-    mem.index.rebuild()
-    print(f"Rebuilt index from {len(mem.ledger)} ledger entries.")
+    mem.rebuild()
+    print(f"Rebuilt index from {len(mem.ledger)} ledger entries; vectors reset.")
+
+
+def cmd_embed(args: argparse.Namespace) -> None:
+    out = _memory(args).embed()
+    print(f"{out['count']} items embedded with {out['embedder']} ({out['embedded']} new).")
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -197,6 +202,8 @@ def cmd_query(args: argparse.Namespace) -> None:
         _print_json(mem.get(args.text))
     else:
         _print_json(mem.search(args.text, include_inactive=args.all, limit=args.limit))
+        if mem.vector_error:
+            print(f"nazareth: keyword search only ({mem.vector_error})", file=sys.stderr)
 
 
 def cmd_history(args: argparse.Namespace) -> None:
@@ -237,7 +244,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true")
     add("context", cmd_context, "memory snapshot for agent session start (hook)")
     add("verify", cmd_verify, "check the ledger hash chain")
-    add("rebuild", cmd_rebuild, "rebuild the index from the ledger")
+    add("rebuild", cmd_rebuild, "rebuild the index from the ledger and reset vectors")
+    add("embed", cmd_embed, "compute semantic search vectors now (needs the search extra)")
 
     p = add("decide", cmd_decide, "record a decision as the human")
     p.add_argument("topic")

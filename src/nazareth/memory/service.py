@@ -22,11 +22,16 @@ from datetime import datetime
 from typing import Any
 
 from nazareth.ledger.chain import Ledger, LedgerEntry
+from nazareth.memory import vectors
 from nazareth.memory.projection import DOMAIN_ACTIONS, Projection
 from nazareth.paths import StatePaths
 
 HUMAN = "human"
 BRIEF_DECISION_LIMIT = 100
+SEARCH_CANDIDATES = 200
+VECTOR_CANDIDATES = 50
+
+_DEFAULT: Any = object()
 
 
 class NazarethError(Exception):
@@ -103,7 +108,10 @@ def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
 
 
 class Memory:
-    def __init__(self, paths: StatePaths) -> None:
+    """`embedder` defaults to the search extra's model when it's installed; pass
+    None for keyword search only, or any `vectors.Embedder`."""
+
+    def __init__(self, paths: StatePaths, embedder: Any = _DEFAULT) -> None:
         if not paths.initialized:
             raise NazarethError(
                 f"Nazareth isn't initialized for {paths.project}. "
@@ -113,9 +121,34 @@ class Memory:
         self.ledger = Ledger(paths.ledger)
         self.index = Projection(paths.index, self.ledger)
         self.index.sync()
+        self.embedder: vectors.Embedder | None = (
+            vectors.default_embedder() if embedder is _DEFAULT else embedder)
+        self.vectors = vectors.VectorStore(paths.vectors)
+        # Why semantic search was switched off for this process, if it was.
+        self.vector_error: str | None = None
 
     def close(self) -> None:
         self.index.close()
+        self.vectors.close()
+
+    def rebuild(self) -> None:
+        """Replay the index from the ledger and drop the derived vectors."""
+        self.index.rebuild()
+        self.vectors.reset()
+
+    def embed(self) -> dict[str, Any]:
+        """Bring the vector store up to date (`nazareth embed`)."""
+        if self.embedder is None:
+            raise NazarethError(
+                "Semantic search isn't installed. Install the extra: pip install 'nazareth[search]'."
+            )
+        self.index.sync()
+        try:
+            embedded = self.vectors.sync(self.index.documents(), self.embedder)
+        except vectors.EmbedderUnavailable as e:
+            raise NazarethError(f"Semantic search unavailable: {e}.") from e
+        return {"embedder": self.embedder.name, "count": self.vectors.count(),
+                "embedded": embedded}
 
     # -- internals ------------------------------------------------------------
 
@@ -391,11 +424,32 @@ class Memory:
             return out
         raise NazarethError(f"Nothing with id {item_id!r}.")
 
+    def _semantic(self, text: str) -> list[tuple[str, str]]:
+        """Vector neighbours of `text`, embedding anything not yet embedded.
+        Any failure turns semantic search off for this process, silently:
+        keyword results are still correct, just less forgiving."""
+        if self.embedder is None or self.vector_error is not None or not text.strip():
+            return []
+        try:
+            self.vectors.sync(self.index.documents(), self.embedder)
+            hits = self.vectors.nearest(
+                text, self.embedder, limit=VECTOR_CANDIDATES,
+                min_similarity=getattr(self.embedder, "min_similarity", 0.0))
+        except Exception as e:  # noqa: BLE001 - never fail a search over enrichment
+            self.vector_error = str(e) or type(e).__name__
+            return []
+        return [(rid, kind) for rid, kind, _ in hits]
+
     def search(self, text: str, include_inactive: bool = False,
                limit: int = 10) -> dict[str, Any]:
+        """Keyword (FTS5) and, when available, vector search, fused by
+        reciprocal rank."""
         self.index.sync()
         records, questions, events = [], [], []
-        for rid, kind in self.index.search(text, limit=200):
+        keyword = self.index.search(text, limit=SEARCH_CANDIDATES)
+        semantic = self._semantic(text)
+        ranked = vectors.rrf(keyword, semantic) if semantic else keyword
+        for rid, kind in ranked:
             if kind in ("decision", "constraint") and len(records) < limit:
                 row = self.index.record(rid)
                 if row is None:

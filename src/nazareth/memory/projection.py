@@ -280,6 +280,12 @@ class Projection:
         ).fetchall()
         return [(r["id"], r["kind"]) for r in rows]
 
+    def documents(self) -> list[tuple[str, str, str]]:
+        """Everything keyword search covers, as (id, kind, body): the corpus the
+        vector store embeds."""
+        return [(r["id"], r["kind"], r["body"])
+                for r in self.db.execute("SELECT id, kind, body FROM search")]
+
     def phase(self) -> dict[str, str]:
         return {
             "current": self._meta("phase_current", "brainstorm"),

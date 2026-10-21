@@ -10,7 +10,7 @@ STATE_DIRNAME = ".nazareth"
 
 # Derived files are rebuildable from the ledger, so they never belong in git.
 # Whether to commit the ledger itself is left to the project.
-_STATE_GITIGNORE = "index.db*\n*.lock\n"
+_STATE_GITIGNORE = "index.db*\nvectors.db*\n*.lock\n"
 
 
 def find_project_dir(start: Path | None = None) -> Path:
@@ -47,11 +47,19 @@ class StatePaths:
         return self.state / "index.db"
 
     @property
+    def vectors(self) -> Path:
+        return self.state / "vectors.db"
+
+    @property
     def initialized(self) -> bool:
         return self.state.is_dir()
 
     def init(self) -> None:
         self.state.mkdir(parents=True, exist_ok=True)
         gitignore = self.state / ".gitignore"
-        if not gitignore.exists():
-            gitignore.write_text(_STATE_GITIGNORE)
+        existing = gitignore.read_text() if gitignore.exists() else ""
+        lines = existing.splitlines()
+        missing = [p for p in _STATE_GITIGNORE.splitlines() if p not in lines]
+        if missing:
+            sep = "\n" if existing and not existing.endswith("\n") else ""
+            gitignore.write_text(existing + sep + "".join(f"{p}\n" for p in missing))

@@ -9,6 +9,9 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
   - `ledger/chain.py` — Hash-chained append-only log; file-locked appends, safe across processes
   - `memory/projection.py` — SQLite index derived from the ledger (records, links, questions, FTS5)
   - `memory/service.py` — `Memory`: all reads/writes and the write policy (supersession, pending)
+  - `memory/vectors.py` — Optional semantic search (`search` extra): `Embedder` protocol,
+    model2vec embedder, `VectorStore` over `.nazareth/vectors.db` (derived, lazily synced at
+    query time), reciprocal rank fusion with FTS5
   - `server.py` — MCP server (8 tools: brief, query, decide, constrain, ask, log, phase, history)
   - `cli.py` — Human CLI (`nazareth status`, `answer`, `resolve`, …)
   - `paths.py` — Finds the project's `.nazareth/` state dir
@@ -23,7 +26,7 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
 
 ```bash
 source .venv/bin/activate
-pip install -e ".[dev]"
+pip install -e ".[dev]"   # includes the search extra; tests use a fake embedder, no network
 pytest
 ruff check src tests
 ```

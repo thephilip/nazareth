@@ -8,7 +8,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+search = [
+    "model2vec>=0.4,<1",
+    "numpy",
+]
 dev = [
+    "nazareth[search]",
     "pytest",
     "pytest-asyncio",
     "ruff",

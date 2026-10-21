@@ -73,8 +73,9 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
               include_inactive: bool = False, limit: int = 10) -> dict:
         """Look things up. Pass `id` to read one decision, constraint, question
         or event in full, including what it supersedes, what superseded it and
-        what depends on it. Or pass `text` to keyword-search decisions,
-        constraints, questions and logged events. Only records in effect (or
+        what depends on it. Or pass `text` to search decisions, constraints,
+        questions and logged events (by keyword, and by meaning when semantic
+        search is installed). Only records in effect (or
         pending) are returned unless include_inactive is true; superseded ones
         then carry `current`, the id now in effect."""
         if id:

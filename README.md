@@ -45,6 +45,25 @@ nazareth init          # creates .nazareth/ (ledger + derived index)
 nazareth status
 ```
 
+### Semantic search (optional)
+
+```bash
+uv tool install -e '.[search]'   # or: pip install 'nazareth[search]'
+nazareth embed                   # optional: compute vectors now instead of on first query
+```
+
+The `search` extra installs [model2vec](https://github.com/MinishLab/model2vec) and numpy.
+`query` then ranks results by meaning as well as keywords (FTS5 and vector hits fused by
+reciprocal rank), so "where do lenses get their identity" finds the decision about
+`NAZARETH_ACTOR`. The first use downloads the `minishlab/potion-base-8M` model (~30 MB)
+from Hugging Face into its usual cache; after that it loads from the cache without network
+access. Vectors live in `.nazareth/vectors.db`, are computed lazily at query time (never on
+the write path), and are deleted by `rebuild`.
+
+Without the extra, or if the model can't be loaded (for example offline on first use),
+`query` quietly uses keyword search alone. The CLI prints one line to stderr when that
+happens; agents just get keyword results.
+
 ### Claude Code
 
 ```bash
@@ -89,7 +108,8 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `query <text>` / `query --id <id>` | Search, or read one item with its supersession chain |
 | `history`, `log` | Read the ledger; log a directive |
 | `verify` | Check the hash chain |
-| `rebuild` | Regenerate the index from the ledger |
+| `rebuild` | Regenerate the index from the ledger and reset vectors |
+| `embed` | Compute semantic search vectors now (needs the `search` extra) |
 | `serve` | Run the MCP server (stdio) |
 | `context` | Memory snapshot for agent session start (used by the hook) |
 
@@ -98,7 +118,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | Tool | Purpose |
 |---|---|
 | `brief` | Phase, constraints, active decisions, pending items, questions, recent activity |
-| `query` | Keyword search, or read one item by id |
+| `query` | Search (keyword, plus semantic with the `search` extra), or read one item by id |
 | `decide` | Record a decision; `supersedes` replaces earlier ones |
 | `constrain` | Record a non-negotiable constraint |
 | `ask` | Leave a question for the human |
@@ -119,6 +139,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 .nazareth/
 ├── ledger.jsonl    # source of truth (hash-chained, append-only)
 ├── index.db        # SQLite projection: records, links, questions, FTS (derived, gitignored)
+├── vectors.db      # embeddings for semantic search (derived, gitignored; `search` extra)
 └── .gitignore
 ```
 
@@ -126,7 +147,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 
 1. ~~Concurrency-safe ledger~~ · ~~decision store~~ · ~~human CLI~~
 2. ~~Claude Code lens definitions~~; dogfood on nazareth itself
-3. Semantic search: LanceDB + local embeddings, projected from the ledger
+3. ~~Semantic search: local model2vec embeddings, hybrid with FTS5~~
 4. Docker Agent lenses (`lenses/` predates the current design and needs rewriting),
    hook-based routing (built-in `task_route` or a Laya classifier)
 5. Graphiti as an optional, asynchronous enrichment layer
