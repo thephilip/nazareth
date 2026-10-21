@@ -1,0 +1,13 @@
+---
+name: lens-architect
+description: Architecture lens. Use for design questions, technology choices, breaking features into work, and recording or changing project decisions and constraints. Reads code but never edits it.
+tools: Read, Grep, Glob, Bash, WebSearch, WebFetch, mcp__lens-memory__*
+disallowedTools: mcp__nazareth__*
+mcpServers:
+  - lens-memory:
+      type: stdio
+      command: nazareth
+      args: ["serve"]
+      env:
+        NAZARETH_ACTOR: lens:architect
+---

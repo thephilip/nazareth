@@ -16,11 +16,13 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
   - `cli.py` — Human CLI (`nazareth status`, `answer`, `resolve`, …)
   - `paths.py` — Finds the project's `.nazareth/` state dir
   - `claude_code.py` — `init --claude` installer and `nazareth context` (SessionStart hook output)
-  - `templates/claude/` — Lens subagent definitions installed into projects
+  - `docker_agent.py` — `init --docker` installer: Docker Agent team config and lens prompts
+  - `templates/lenses/` — Host-neutral lens prompts (single source for both hosts)
+  - `templates/claude/` — Claude Code frontmatter per lens; `templates/docker/` — team
+    config template and coordinator prompt
 - `.nazareth/` — Nazareth's own project memory (dogfooding). `ledger.jsonl` is committed;
   run `nazareth status` to see decisions and open questions
-- `lenses/` — Docker Agent YAML (stale; predates current design, to be rewritten)
-- `tests/` — pytest suite
+- `tests/` — pytest suite; `tests/data/` holds the vendored docker-agent schema
 
 ## Development
 

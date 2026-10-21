@@ -13,6 +13,7 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.types import ToolAnnotations
 
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
@@ -29,6 +30,11 @@ and an append-only log, shared by every agent and the human.
 - When you need the human, `ask` instead of guessing or blocking.
 - `log` what you produce (artifacts, findings, tests) so others can find it.
 """
+
+# Hosts use these to skip approval for reads; Docker Agent's readonly toolsets keep
+# only READ tools. `phase` writes when given arguments, so it is not read-only.
+READ = ToolAnnotations(read_only_hint=True)
+WRITE = ToolAnnotations(read_only_hint=False, destructive_hint=False)
 
 
 def _actor(actor: str | None) -> str:
@@ -70,14 +76,14 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         return call(lambda m: m.search(text, include_inactive=include_inactive, limit=limit,
                                        semantic=hits))
 
-    @server.tool()
+    @server.tool(annotations=READ)
     def brief() -> dict:
         """Orient yourself: current phase, all active constraints, all active
         decisions (id, topic, text), records pending human review, open and
         recently answered questions, and recent activity. Call this first."""
         return call(lambda m: m.brief())
 
-    @server.tool()
+    @server.tool(annotations=READ)
     def query(text: str | None = None, id: str | None = None,
               include_inactive: bool = False, limit: int = 10) -> dict:
         """Look things up. Pass `id` to read one decision, constraint, question
@@ -93,7 +99,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
             return search(text, include_inactive, limit)
         raise ToolError("Pass `text` to search or `id` to read one item.")
 
-    @server.tool()
+    @server.tool(annotations=WRITE)
     def decide(topic: str, decision: str, rationale: str,
                supersedes: list[str] | None = None, depends_on: list[str] | None = None,
                actor: str | None = None) -> dict:
@@ -108,7 +114,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         return call(lambda m: m.decide(topic, decision, rationale, _actor(actor),
                                        supersedes=supersedes, depends_on=depends_on))
 
-    @server.tool()
+    @server.tool(annotations=WRITE)
     def constrain(constraint: str, reason: str, topic: str | None = None,
                   supersedes: list[str] | None = None, actor: str | None = None) -> dict:
         """Record a non-negotiable project constraint (e.g. 'No OAuth for MVP')
@@ -117,7 +123,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         return call(lambda m: m.constrain(constraint, reason, _actor(actor), topic=topic,
                                           supersedes=supersedes))
 
-    @server.tool()
+    @server.tool(annotations=WRITE)
     def ask(question: str, context: str | None = None, ref: str | None = None,
             actor: str | None = None) -> dict:
         """Leave a question for the human instead of guessing or blocking.
@@ -125,7 +131,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         `context` to answer without reading the code; `ref` is a file or id."""
         return call(lambda m: m.ask(question, _actor(actor), context=context, ref=ref))
 
-    @server.tool()
+    @server.tool(annotations=WRITE)
     def log(action: str, summary: str, ref: str | None = None, severity: str | None = None,
             actor: str | None = None) -> dict:
         """Append an event to the project ledger: what you produced or found.
@@ -134,7 +140,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         `severity` (low/medium/high/critical) is for findings."""
         return call(lambda m: m.log(action, summary, _actor(actor), ref=ref, severity=severity))
 
-    @server.tool()
+    @server.tool(annotations=WRITE)
     def phase(set_current: str | None = None, set_next: str | None = None,
               actor: str | None = None) -> dict:
         """Read the project phase (e.g. brainstorm, scaffold, mvp, harden), or
@@ -145,7 +151,7 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         return call(lambda m: m.set_phase(_actor(actor), current=set_current,
                                           next_phase=set_next))
 
-    @server.tool()
+    @server.tool(annotations=READ)
     def history(since: str | None = None, actor: str | None = None,
                 action: str | None = None, limit: int = 50) -> dict:
         """Read the ledger, newest last. Filter by `since` ('30m', '8h', '7d'

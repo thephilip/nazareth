@@ -18,6 +18,7 @@ dev = [
     "pytest-asyncio",
     "ruff",
     "pyyaml",
+    "jsonschema",
 ]
 
 [project.scripts]
@@ -34,7 +35,7 @@ line-length = 100
 where = ["src"]
 
 [tool.setuptools.package-data]
-nazareth = ["templates/claude/*.md"]
+nazareth = ["templates/*/*"]
 
 [build-system]
 requires = ["setuptools>=75"]

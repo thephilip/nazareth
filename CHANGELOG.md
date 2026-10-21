@@ -11,6 +11,13 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Added
 
+- `nazareth init --docker [--model provider/model]`, which writes a Docker Agent team
+  config (`.docker-agent/nazareth.yaml`) with a coordinator that delegates to the
+  architect, code and reviewer lenses. Each agent runs its own memory server with a fixed
+  identity, and the model defaults to the first of Anthropic, OpenAI, Google and the
+  local Docker Model Runner that has credentials.
+- MCP tool annotations: `brief`, `query` and `history` are read-only, and the write tools
+  are marked non-destructive.
 - Hybrid semantic search as an optional `search` extra: model2vec
   (`minishlab/potion-base-8M`) embeddings fused with FTS5 keyword search by reciprocal
   rank. Vectors live in a derived `.nazareth/vectors.db`, are computed lazily at query
@@ -34,11 +41,19 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Changed
 
+- Lens prompts have a single source shared by Claude Code and Docker Agent, and no
+  longer name host-specific tools. Rerun `init --claude` after deleting
+  `.claude/agents/lens-*.md` to pick up the new wording.
+- The PATH warning from `init` now covers both hosts.
 - Rebuilt the memory layer ledger-first. The first scaffold's Graphiti/FalkorDB, LanceDB
   and gateway-specific configuration were dropped. Graphiti may return later as optional
   asynchronous enrichment, and LLM providers stay pluggable.
 - `init` adds missing patterns to an existing `.nazareth/.gitignore`, and the vector store
   does the same when it first creates `vectors.db`, so older projects ignore it too.
+
+### Removed
+
+- The top-level `lenses/` Docker Agent files, which predated the current design.
 
 ### Fixed
 

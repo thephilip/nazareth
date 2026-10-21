@@ -11,7 +11,7 @@ from nazareth.claude_code import (
     HOOK_COMMAND,
     ITEM_CHARS,
     LENSES,
-    _template,
+    _agent_file,
     install,
     path_warning,
     render_context,
@@ -29,7 +29,7 @@ def _frontmatter(text: str) -> dict:
 
 @pytest.mark.parametrize("lens", LENSES)
 def test_lens_templates_are_well_formed(lens: str) -> None:
-    fm = _frontmatter(_template(f"{lens}.md"))
+    fm = _frontmatter(_agent_file(lens))
     assert fm["name"] == lens
     assert fm["description"]
     # Each lens writes through its own server with a fixed identity, and can't
@@ -46,7 +46,7 @@ def test_lens_templates_are_well_formed(lens: str) -> None:
 
 @pytest.mark.parametrize("lens", ["lens-architect", "lens-reviewer"])
 def test_read_only_lenses_cannot_edit(lens: str) -> None:
-    tools = _frontmatter(_template(f"{lens}.md"))["tools"]
+    tools = _frontmatter(_agent_file(lens))["tools"]
     assert "Edit" not in tools and "Write" not in tools
 
 

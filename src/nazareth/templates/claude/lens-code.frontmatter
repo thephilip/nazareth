@@ -1,0 +1,12 @@
+---
+name: lens-code
+description: Implementation lens. Use to write or change code and tests in line with the project's recorded decisions and constraints. Logs what it builds to the shared memory.
+disallowedTools: mcp__nazareth__*
+mcpServers:
+  - lens-memory:
+      type: stdio
+      command: nazareth
+      args: ["serve"]
+      env:
+        NAZARETH_ACTOR: lens:code
+---

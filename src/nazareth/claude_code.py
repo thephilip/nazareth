@@ -92,8 +92,17 @@ def render_context(brief: dict[str, Any]) -> str:
     return "\n".join(head + body + tail)[:CONTEXT_BUDGET]
 
 
-def _template(name: str) -> str:
-    return resources.files("nazareth").joinpath("templates", "claude", name).read_text()
+def template(*parts: str) -> str:
+    return resources.files("nazareth").joinpath("templates", *parts).read_text()
+
+
+def lens_body(lens: str) -> str:
+    """The host-neutral prompt for a lens, shared by every host."""
+    return template("lenses", f"{lens}.md")
+
+
+def _agent_file(lens: str) -> str:
+    return template("claude", f"{lens}.frontmatter") + lens_body(lens)
 
 
 def _load_json(path: Path, rel: str) -> dict[str, Any]:
@@ -127,11 +136,11 @@ def _write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def install(project: Path) -> list[tuple[str, str]]:
+def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
     """Add lens subagents, the MCP server, and the SessionStart hook to a
     project. Existing files and entries are never overwritten, and existing
-    config is checked before anything is written. Returns (path, what
-    happened) pairs."""
+    config is checked before anything is written; `check_only` stops there.
+    Returns (path, what happened) pairs."""
     mcp_path = project / ".mcp.json"
     mcp = _load_json(mcp_path, ".mcp.json")
     servers = _expect(mcp.setdefault("mcpServers", {}), dict, ".mcp.json", '"mcpServers"')
@@ -146,6 +155,8 @@ def install(project: Path) -> list[tuple[str, str]]:
         _expect(group, dict, settings_rel, "each SessionStart entry")
         for h in _expect(group.get("hooks", []), list, settings_rel, 'each entry\'s "hooks"'):
             _expect(h, dict, settings_rel, "each hook")
+    if check_only:
+        return []
 
     report: list[tuple[str, str]] = []
     for lens in LENSES:
@@ -154,7 +165,7 @@ def install(project: Path) -> list[tuple[str, str]]:
         if path.exists():
             report.append((rel, "exists, left as is"))
         else:
-            _write(path, _template(f"{lens}.md"))
+            _write(path, _agent_file(lens))
             report.append((rel, "created"))
 
     if "nazareth" in servers:
@@ -179,14 +190,15 @@ def install(project: Path) -> list[tuple[str, str]]:
 
 
 def path_warning(running: str) -> str | None:
-    """Claude Code runs the bare `nazareth` command for the hook and every MCP
-    server. Say so if that's missing, or isn't the `running` script."""
+    """Claude Code and Docker Agent run the bare `nazareth` command for the
+    hook and every MCP server. Say so if that's missing, or isn't the
+    `running` script."""
     found = shutil.which("nazareth")
     if found is None:
-        return ("`nazareth` isn't on PATH, so Claude Code can't run the context hook or start "
+        return ("`nazareth` isn't on PATH, so agent hosts can't run the context hook or start "
                 "the lens memory servers. Install it globally, e.g. `uv tool install -e .` "
                 "from the nazareth repo.")
     if Path(running).name == "nazareth" and Path(found).resolve() != Path(running).resolve():
-        return (f"Claude Code will run the `nazareth` on PATH ({found}), not this one "
+        return (f"Agent hosts will run the `nazareth` on PATH ({found}), not this one "
                 f"({running}); make sure that one is current.")
     return None

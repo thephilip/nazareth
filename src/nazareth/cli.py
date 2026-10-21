@@ -53,19 +53,33 @@ def _record_line(r: dict[str, Any]) -> str:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
-    from nazareth.claude_code import install, path_warning
+    from nazareth import claude_code, docker_agent
 
+    if args.model and not args.docker:
+        raise NazarethError("--model sets the Docker Agent lens model; use it with --docker.")
     paths = _paths(args)
-    # install() checks the project's Claude Code config before writing, so a
-    # bad file stops init before anything (including .nazareth/) is created.
-    report = install(paths.project) if args.claude else []
+    # Everything that can fail is checked first: the Claude Code config and the
+    # Docker model, so a bad one stops init before anything (including
+    # .nazareth/) is created.
+    if args.claude:
+        claude_code.install(paths.project, check_only=True)
+    if args.docker:
+        docker_agent.render(args.model)
+    report = claude_code.install(paths.project) if args.claude else []
+    if args.docker:
+        report += docker_agent.install(paths.project, args.model)
     existed = paths.initialized
     paths.init()
     Memory(paths).close()
     print(f"{'Already initialized' if existed else 'Initialized'}: {paths.state}")
     for path, what in report:
         print(f"  {path}: {what}")
-    if args.claude and (warning := path_warning(sys.argv[0])):
+    if args.docker:
+        config = f"{docker_agent.CONFIG_DIR}/{docker_agent.CONFIG}"
+        print(f"Run the lenses with `docker agent run {config}` (or add `-a lens-code`).")
+        if not docker_agent.found():
+            print("Docker Agent isn't installed; install it with `brew install docker-agent`.")
+    if (args.claude or args.docker) and (warning := claude_code.path_warning(sys.argv[0])):
         print(f"Warning: {warning}", file=sys.stderr)
 
 
@@ -236,9 +250,13 @@ def build_parser() -> argparse.ArgumentParser:
         p.set_defaults(fn=fn)
         return p
 
-    add("init", cmd_init, "create .nazareth/ in this project").add_argument(
-        "--claude", action="store_true",
-        help="also add lens subagents, the MCP server and a context hook for Claude Code")
+    p = add("init", cmd_init, "create .nazareth/ in this project")
+    p.add_argument("--claude", action="store_true",
+                   help="also add lens subagents, the MCP server and a context hook for Claude Code")
+    p.add_argument("--docker", action="store_true",
+                   help="also add a Docker Agent team config with a coordinator and the lenses")
+    p.add_argument("--model", metavar="PROVIDER/MODEL",
+                   help="model for the Docker Agent lenses (default: first with credentials)")
     add("serve", cmd_serve, "run the MCP memory server (stdio)")
     add("status", cmd_status, "what needs you, what's decided, what happened").add_argument(
         "--json", action="store_true")

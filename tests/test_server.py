@@ -53,6 +53,18 @@ def test_lists_tools_with_instructions(paths: StatePaths) -> None:
     assert described
 
 
+def test_tools_are_annotated(paths: StatePaths) -> None:
+    async def steps(client):
+        return {t.name: t.annotations for t in (await client.list_tools()).tools}
+
+    annotations = _run(paths, steps)
+    reads = {"brief", "query", "history"}
+    for name, a in annotations.items():
+        assert a.read_only_hint is (name in reads), name
+        if name not in reads:
+            assert a.destructive_hint is False, name
+
+
 def test_decide_supersede_query_roundtrip(paths: StatePaths) -> None:
     async def steps(client):
         a = await _call(client, "decide", topic="auth", decision="API keys", rationale="MVP",

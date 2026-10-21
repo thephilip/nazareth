@@ -1,0 +1,106 @@
+# Nazareth lenses for Docker Agent, written by `nazareth init --docker`.
+# Run the coordinator:  docker agent run .docker-agent/nazareth.yaml
+# Run one lens:         docker agent run .docker-agent/nazareth.yaml -a lens-code
+#
+# Every agent runs its own `nazareth serve` with a fixed NAZARETH_ACTOR, so the
+# project ledger records which lens wrote what.
+version: "16"
+
+models:
+  # One model for every agent. docker-agent uses the first candidate whose
+  # credentials are set; the local Docker Model Runner (dmr) needs none.
+  lens:
+    first_available: $candidates
+
+# To use any OpenAI-compatible endpoint (a company LLM gateway, vLLM, ...),
+# uncomment this provider and point `models.lens` at it instead:
+#
+# providers:
+#   llm:
+#     base_url: $${env.NAZARETH_LLM_BASE_URL}
+#     token_key: NAZARETH_LLM_API_KEY
+#
+# models:
+#   lens:
+#     provider: llm
+#     model: <model id served by that endpoint>
+
+permissions:
+  # Memory writes are append-only and never destructive; the reads are
+  # annotated read-only.
+  allow:
+    - nazareth_decide
+    - nazareth_constrain
+    - nazareth_ask
+    - nazareth_log
+    - nazareth_phase
+
+agents:
+  root:
+    model: lens
+    description: Coordinator. Routes each request to the architect, code or reviewer lens.
+    instruction_file: coordinator.md
+    sub_agents: [lens-architect, lens-code, lens-reviewer]
+    hooks:
+      session_start:
+        - type: command
+          command: nazareth context
+          timeout: 10
+    toolsets:
+      - type: filesystem
+        readonly: true
+      - type: mcp
+        name: nazareth
+        command: nazareth
+        args: [serve]
+        env:
+          NAZARETH_ACTOR: agent:main
+
+  lens-architect:
+    model: lens
+    description: $architect
+    instruction_file: lenses/lens-architect.md
+    toolsets:
+      - type: filesystem
+        readonly: true
+      - type: git
+        readonly: true
+      - type: fetch
+      - type: mcp
+        name: nazareth
+        command: nazareth
+        args: [serve]
+        env:
+          NAZARETH_ACTOR: lens:architect
+
+  lens-code:
+    model: lens
+    description: $code
+    instruction_file: lenses/lens-code.md
+    toolsets:
+      - type: filesystem
+      - type: shell
+      - type: git
+      - type: mcp
+        name: nazareth
+        command: nazareth
+        args: [serve]
+        env:
+          NAZARETH_ACTOR: lens:code
+
+  lens-reviewer:
+    model: lens
+    description: $reviewer
+    instruction_file: lenses/lens-reviewer.md
+    toolsets:
+      - type: filesystem
+        readonly: true
+      - type: git
+        readonly: true
+      - type: shell
+      - type: mcp
+        name: nazareth
+        command: nazareth
+        args: [serve]
+        env:
+          NAZARETH_ACTOR: lens:reviewer
