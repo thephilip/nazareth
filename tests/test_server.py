@@ -7,6 +7,7 @@ import anyio
 import pytest
 from mcp.client.client import Client
 
+from nazareth.memory.service import Memory
 from nazareth.paths import StatePaths
 from nazareth.server import build_server
 
@@ -27,6 +28,12 @@ async def _call(client: Client, name: str, **args):
     if result.is_error:
         return {"error": text}
     return json.loads(text)
+
+
+@pytest.fixture(autouse=True)
+def _no_fixed_actor(monkeypatch) -> None:
+    # A lens running the suite may have NAZARETH_ACTOR set; tests opt in explicitly.
+    monkeypatch.delenv("NAZARETH_ACTOR", raising=False)
 
 
 @pytest.fixture
@@ -105,9 +112,66 @@ def test_uninitialized_project_explains_itself(tmp_path: Path) -> None:
 def test_phase_read_and_set(paths: StatePaths) -> None:
     async def steps(client):
         before = await _call(client, "phase")
-        after = await _call(client, "phase", set_current="mvp", actor="human")
+        after = await _call(client, "phase", set_current="mvp", actor="lens:architect")
         return before, after
 
     before, after = _run(paths, steps)
     assert before["current"] == "brainstorm"
     assert after == {"current": "mvp", "next": "scaffold"}
+
+
+def test_env_actor_beats_argument(paths: StatePaths, monkeypatch) -> None:
+    monkeypatch.setenv("NAZARETH_ACTOR", "lens:code")
+
+    async def steps(client):
+        out = await _call(client, "log", action="artifact", summary="x",
+                          actor="lens:architect")
+        return await _call(client, "query", id=out["id"])
+
+    assert _run(paths, steps)["actor"] == "lens:code"
+
+
+def test_argument_used_without_env(paths: StatePaths) -> None:
+    async def steps(client):
+        out = await _call(client, "log", action="artifact", summary="x",
+                          actor=" lens:architect ")
+        return await _call(client, "query", id=out["id"])
+
+    assert _run(paths, steps)["actor"] == "lens:architect"
+
+
+@pytest.mark.parametrize("claimed", ["human", " Human ", "HUMAN"])
+def test_human_argument_rejected(paths: StatePaths, claimed: str) -> None:
+    async def steps(client):
+        return (
+            await _call(client, "log", action="artifact", summary="x", actor=claimed),
+            await _call(client, "history"),
+        )
+
+    out, history = _run(paths, steps)
+    assert "nazareth" in out["error"] and "CLI" in out["error"]
+    assert not [e for e in history["entries"] if e["action"] == "artifact"]
+
+
+def test_human_env_rejected(paths: StatePaths, monkeypatch) -> None:
+    monkeypatch.setenv("NAZARETH_ACTOR", " Human")
+
+    async def steps(client):
+        return await _call(client, "decide", topic="t", decision="d", rationale="r")
+
+    assert "CLI" in _run(paths, steps)["error"]
+
+
+def test_lens_cannot_supersede_human_by_claiming_human(paths: StatePaths, monkeypatch) -> None:
+    human = Memory(paths).decide("storage", "SQLite", "simple", "human")
+    monkeypatch.setenv("NAZARETH_ACTOR", "lens:code")
+
+    async def steps(client):
+        forged = await _call(client, "decide", topic="storage", decision="Postgres",
+                             rationale="scale", supersedes=[human["id"]], actor="human")
+        brief = await _call(client, "brief")
+        return forged, brief
+
+    forged, brief = _run(paths, steps)
+    assert "CLI" in forged["error"]
+    assert [d["id"] for d in brief["decisions"]] == [human["id"]]

@@ -13,7 +13,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 
-from nazareth.memory.service import Memory, NazarethError
+from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
 
 INSTRUCTIONS = """\
@@ -31,7 +31,16 @@ and an append-only log, shared by every agent and the human.
 
 
 def _actor(actor: str | None) -> str:
-    return (actor or os.environ.get("NAZARETH_ACTOR") or "agent").strip()
+    """Who is writing. A fixed NAZARETH_ACTOR wins over the per-call argument,
+    so a lens can't claim another identity; nobody may write as the human."""
+    claimed = (actor or "").strip()
+    fixed = (os.environ.get("NAZARETH_ACTOR") or "").strip()
+    if HUMAN in (claimed.lower(), fixed.lower()):
+        raise NazarethError(
+            f"Agents can't write as {HUMAN!r}. The human records decisions through the "
+            "`nazareth` CLI; leave `actor` unset or name yourself, e.g. 'lens:architect'."
+        )
+    return fixed or claimed or "agent"
 
 
 def build_server(paths: StatePaths | None = None) -> MCPServer:
@@ -79,7 +88,8 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         pending for the human. Superseding something already replaced fails
         and names the current one. `depends_on` lists ids this builds on.
         Returns the new id, its status, and related active records to check
-        for overlap. `actor` is who you are, e.g. 'lens:architect'."""
+        for overlap. `actor` names you (e.g. 'lens:architect') and is used only
+        when the server has no fixed identity."""
         return call(lambda m: m.decide(topic, decision, rationale, _actor(actor),
                                        supersedes=supersedes, depends_on=depends_on))
 
