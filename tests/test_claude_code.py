@@ -9,13 +9,15 @@ import yaml
 from nazareth.claude_code import (
     CONTEXT_BUDGET,
     HOOK_COMMAND,
+    ITEM_CHARS,
     LENSES,
     _template,
     install,
+    path_warning,
     render_context,
 )
 from nazareth.cli import main
-from nazareth.memory.service import HUMAN, Memory
+from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths
 
 
@@ -127,3 +129,83 @@ def test_context_respects_budget() -> None:
     assert "more; use `query`" in text
     shown = text.count("- dec-")
     assert f"… {200 - shown} more" in text
+
+
+def test_context_keeps_warning_and_instructions_when_constraints_overflow() -> None:
+    constraints = [{"id": f"con-{i:06x}", "text": "c" * 300} for i in range(40)]
+    decisions = [{"id": f"dec-{i:06x}", "topic": "t", "text": "d" * 100} for i in range(5)]
+    brief = {"phase": {"current": "mvp", "next": "harden"}, "constraints": constraints,
+             "decisions": decisions, "active_decision_count": 5,
+             "pending_review": [{}], "open_questions": [],
+             "recent_answers": [{"id": "q-1", "question": "Windows?", "answer": "no"}]}
+    text = render_context(brief)
+    assert len(text) <= CONTEXT_BUDGET
+    assert "Don't rely on pending decisions." in text
+    assert text.rstrip().endswith("lens-reviewer.")
+    shown = text.count("- con-")
+    assert 0 < shown < 40
+    assert f"… {40 - shown} more; use `query`" in text
+    assert "**Active decisions:**" in text  # every section keeps its title and pointer
+
+
+def test_context_clips_long_items() -> None:
+    brief = {"phase": {"current": "mvp", "next": "harden"},
+             "constraints": [{"id": "con-1", "text": "x" * 20000}],
+             "decisions": [], "active_decision_count": 0}
+    line = next(ln for ln in render_context(brief).splitlines() if ln.startswith("- con-1"))
+    assert len(line) == ITEM_CHARS and line.endswith("…")
+
+
+def test_context_puts_waiting_before_answers_without_constraints() -> None:
+    brief = {"phase": {"current": "mvp", "next": "harden"}, "constraints": [],
+             "decisions": [], "active_decision_count": 0, "open_questions": [{}],
+             "recent_answers": [{"id": "q-1", "question": "Windows?", "answer": "no"}]}
+    text = render_context(brief)
+    assert text.index("Waiting on the human") < text.index("Recently answered")
+
+
+def test_context_reports_unreadable_memory(tmp_path: Path, capsys) -> None:
+    paths = StatePaths(tmp_path)
+    paths.init()
+    Memory(paths).close()
+    with paths.ledger.open("a") as f:
+        f.write("not json\n")
+    main(["--dir", str(tmp_path), "context"])
+    out = capsys.readouterr().out
+    assert "Unavailable" in out and "nazareth verify" in out
+
+
+@pytest.mark.parametrize("rel, text", [
+    (".mcp.json", "{not json"),
+    (".mcp.json", "[]"),
+    (".mcp.json", '{"mcpServers": []}'),
+    (".claude/settings.json", '{"hooks": []}'),
+    (".claude/settings.json", '{"hooks": {"SessionStart": [{"hooks": "x"}]}}'),
+])
+def test_init_rejects_bad_config_before_writing(tmp_path: Path, capsys, rel: str,
+                                                text: str) -> None:
+    (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / rel).write_text(text)
+    with pytest.raises(NazarethError, match="Nothing was changed"):
+        install(tmp_path)
+    with pytest.raises(SystemExit):
+        main(["--dir", str(tmp_path), "init", "--claude"])
+    assert rel in capsys.readouterr().err
+    assert (tmp_path / rel).read_text() == text
+    assert not (tmp_path / ".nazareth").exists()
+    assert not (tmp_path / ".claude" / "agents").exists()
+    assert not list(tmp_path.rglob("*.nazareth-tmp"))
+
+
+def test_path_warning(monkeypatch, tmp_path: Path) -> None:
+    mine = tmp_path / "venv" / "nazareth"
+    other = tmp_path / "global" / "nazareth"
+    for script in (mine, other):
+        script.parent.mkdir()
+        script.write_text("")
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    assert "isn't on PATH" in path_warning(str(mine))
+    monkeypatch.setattr("shutil.which", lambda _: str(other))
+    assert str(other) in path_warning(str(mine))
+    assert path_warning(str(other)) is None
+    assert path_warning("/usr/lib/python3/runpy.py") is None  # not run as the script

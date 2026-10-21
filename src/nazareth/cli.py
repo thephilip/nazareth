@@ -53,16 +53,20 @@ def _record_line(r: dict[str, Any]) -> str:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
+    from nazareth.claude_code import install, path_warning
+
     paths = _paths(args)
+    # install() checks the project's Claude Code config before writing, so a
+    # bad file stops init before anything (including .nazareth/) is created.
+    report = install(paths.project) if args.claude else []
     existed = paths.initialized
     paths.init()
     Memory(paths).close()
     print(f"{'Already initialized' if existed else 'Initialized'}: {paths.state}")
-    if args.claude:
-        from nazareth.claude_code import install
-
-        for path, what in install(paths.project):
-            print(f"  {path}: {what}")
+    for path, what in report:
+        print(f"  {path}: {what}")
+    if args.claude and (warning := path_warning(sys.argv[0])):
+        print(f"Warning: {warning}", file=sys.stderr)
 
 
 def cmd_context(args: argparse.Namespace) -> None:
@@ -73,8 +77,12 @@ def cmd_context(args: argparse.Namespace) -> None:
     paths = _paths(args)
     if not paths.initialized:
         return
-    mem = Memory(paths)
-    print(render_context(mem.brief()))
+    try:
+        mem = Memory(paths)
+        print(render_context(mem.brief()))
+    except Exception as e:  # noqa: BLE001 - a traceback at every session start helps nobody
+        print(f"## Project memory (nazareth)\nUnavailable: {type(e).__name__}: {e}\n"
+              "Ask the human to run `nazareth verify`; don't assume earlier decisions.")
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
