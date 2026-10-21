@@ -87,7 +87,8 @@ def fts_query(text: str) -> str | None:
 class Projection:
     def __init__(self, path: Path, ledger: Ledger) -> None:
         self._ledger = ledger
-        self.db = sqlite3.connect(path, timeout=30, isolation_level=None)
+        self.db = sqlite3.connect(path, timeout=30, isolation_level=None,
+                                  check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)

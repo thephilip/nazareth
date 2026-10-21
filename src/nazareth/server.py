@@ -7,6 +7,7 @@ ledger is the audit trail; read-only calls are not logged.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Callable
 from typing import Any
 
@@ -47,12 +48,16 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
     paths = paths or StatePaths(find_project_dir())
     server = MCPServer("nazareth", instructions=INSTRUCTIONS)
     state: dict[str, Memory] = {}
+    # The SDK runs sync tools on worker threads and an agent may call several at
+    # once; `Memory` shares one SQLite connection, so calls run one at a time.
+    lock = threading.Lock()
 
     def call(fn: Callable[[Memory], Any]) -> Any:
         try:
-            if "mem" not in state:
-                state["mem"] = Memory(paths)
-            return fn(state["mem"])
+            with lock:
+                if "mem" not in state:
+                    state["mem"] = Memory(paths)
+                return fn(state["mem"])
         except NazarethError as e:
             raise ToolError(str(e)) from e
 

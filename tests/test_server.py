@@ -175,3 +175,24 @@ def test_lens_cannot_supersede_human_by_claiming_human(paths: StatePaths, monkey
     forged, brief = _run(paths, steps)
     assert "CLI" in forged["error"]
     assert [d["id"] for d in brief["decisions"]] == [human["id"]]
+
+
+def test_parallel_calls_on_one_server(paths: StatePaths) -> None:
+    # Sync tools run on worker threads; a lens issuing calls at once must not see
+    # errors for writes that landed (the SQLite connection is shared across threads).
+    async def steps(client):
+        await _call(client, "brief")
+        results = []
+
+        async def one(i):
+            results.append(await _call(client, "log", action="finding", summary=f"p{i}"))
+            results.append(await _call(client, "ask", question=f"q{i}?"))
+
+        async with anyio.create_task_group() as tg:
+            for i in range(8):
+                tg.start_soon(one, i)
+        return results
+
+    results = _run(paths, steps)
+    assert [r for r in results if "error" in r] == []
+    assert len(Memory(paths).history(limit=100)["entries"]) >= 16
