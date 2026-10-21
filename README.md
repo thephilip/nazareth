@@ -104,7 +104,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `resolve <id> --accept\|--reject` | Settle a pending decision |
 | `decide`, `constrain` | Record your own decisions and constraints |
 | `retire <id> --why` | Take a decision or constraint out of effect |
-| `phase [--current X] [--next Y]` | Show or set the project phase |
+| `phase [X] [--next Y]` | Show or set the project phase (`--current X` also works) |
 | `query <text>` / `query --id <id>` | Search, or read one item with its supersession chain |
 | `history`, `log` | Read the ledger; log a directive |
 | `verify` | Check the hash chain |
@@ -142,6 +142,21 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 ├── vectors.db      # embeddings for semantic search (derived, gitignored; `search` extra)
 └── .gitignore
 ```
+
+## Known limitations
+
+- **Lenses with a shell can write as you.** The CLI records every write as `human`, and
+  the lens subagents have Bash, so a misbehaving or prompt-injected lens could run
+  `nazareth decide …` and skip the pending-review gate. MCP writes are protected; the CLI
+  isn't yet. An environment-variable guard was considered and rejected (agents can unset
+  it, and it would block your own `!` commands); a confirmation an agent can't fake is
+  being explored. Tracked as q-0bfe36.
+- **`rebuild` while servers are running.** Other running servers keep searching the
+  deleted vector store until they restart. Results stay correct; restart them to free it.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## Roadmap
 

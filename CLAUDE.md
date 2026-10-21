@@ -31,6 +31,9 @@ pytest
 ruff check src tests
 ```
 
+Keep `README.md` and `CHANGELOG.md` (under `## [Unreleased]`) current in the same change as
+the code: user-visible behaviour, commands, dependencies and known limitations.
+
 ## Key Design Decisions
 
 - The ledger is the only source of truth. `index.db` is a projection: never write to it
