@@ -22,10 +22,12 @@ from mcp.types import TextContent, Tool
 
 from nazareth.ledger.chain import Ledger
 from nazareth.memory.graph import create_graph
+from nazareth.memory.vectors import VectorIndex
 
 PROJECT_DIR = Path(os.environ.get("NAZARETH_PROJECT_DIR", "."))
 STATE_DIR = PROJECT_DIR / ".state"
 LEDGER_PATH = STATE_DIR / "ledger" / "events.jsonl"
+VECTOR_DB_PATH = STATE_DIR / "vectors"
 PHASE_PATH = STATE_DIR / "phase.md"
 
 
@@ -245,6 +247,7 @@ class NazarethServer:
         self.server = Server("nazareth")
         self.ledger = Ledger(LEDGER_PATH)
         self.graphiti = None
+        self.vectors = VectorIndex(VECTOR_DB_PATH)
         self._setup_handlers()
 
     def _setup_handlers(self) -> None:
@@ -286,11 +289,17 @@ class NazarethServer:
             episode_body=episode_content,
             source_description=f"Decision by {args['actor']}",
         )
-        self.ledger.append(
+        entry = self.ledger.append(
             actor=args["actor"],
             action="decision",
             summary=args["decision"],
             payload={"topic": args["topic"], "rationale": args["rationale"]},
+        )
+        await self.vectors.add(
+            id=entry.id,
+            text=episode_content,
+            category="decision",
+            actor=args["actor"],
         )
         return {"status": "recorded", "topic": args["topic"]}
 
@@ -305,30 +314,41 @@ class NazarethServer:
             episode_body=episode_content,
             source_description=f"Constraint set by {args['actor']}",
         )
-        self.ledger.append(
+        entry = self.ledger.append(
             actor=args["actor"],
             action="constraint",
             summary=args["constraint"],
             payload={"reason": args["reason"]},
         )
+        await self.vectors.add(
+            id=entry.id,
+            text=episode_content,
+            category="constraint",
+            actor=args["actor"],
+        )
         return {"status": "recorded", "constraint": args["constraint"]}
 
     async def _handle_query(self, args: dict) -> dict:
-        results = await self.graphiti.search(
+        graph_results = await self.graphiti.search(
             group_ids=["project"],
             query=args["question"],
             num_results=10,
         )
-        formatted = []
-        for edge in results:
-            formatted.append({
+        graph_formatted = []
+        for edge in graph_results:
+            graph_formatted.append({
                 "fact": edge.fact,
                 "source": edge.source_node_name if hasattr(edge, "source_node_name") else None,
                 "target": edge.target_node_name if hasattr(edge, "target_node_name") else None,
                 "valid_at": str(edge.valid_at) if hasattr(edge, "valid_at") else None,
                 "invalid_at": str(edge.invalid_at) if hasattr(edge, "invalid_at") else None,
             })
-        return {"results": formatted, "query": args["question"]}
+        vector_results = await self.vectors.search(args["question"], limit=5)
+        return {
+            "graph": graph_formatted,
+            "semantic": vector_results,
+            "query": args["question"],
+        }
 
     async def _handle_log(self, args: dict) -> dict:
         entry = self.ledger.append(
