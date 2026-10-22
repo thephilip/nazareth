@@ -17,6 +17,7 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
     `nazareth enrich`; graph facts feed `query`'s rank fusion
   - `server.py` — MCP server (8 tools: brief, query, decide, constrain, ask, log, phase, history)
   - `cli.py` — Human CLI (`nazareth status`, `answer`, `resolve`, …)
+  - `term.py` — CLI styling: colour roles (NO_COLOR/FORCE_COLOR), terminal width, wrapping
   - `paths.py` — Finds the project's `.nazareth/` state dir
   - `claude_code.py` — `init --claude` installer and `nazareth context` (SessionStart hook output)
   - `docker_agent.py` — `init --docker` installer: Docker Agent team config and lens prompts

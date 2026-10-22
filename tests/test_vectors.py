@@ -184,7 +184,7 @@ def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(vectors, "default_embedder", lambda: FakeEmbedder())
     main(["--dir", str(tmp_path), "embed"])
     assert capsys.readouterr().out.strip() == "4 items embedded with fake:bow-v1 (4 new)."
-    main(["--dir", str(tmp_path), "query", "identity"])
+    main(["--dir", str(tmp_path), "query", "identity", "--json"])
     captured = capsys.readouterr()
     assert json.loads(captured.out)["records"][0]["topic"] == "lens-actor"
     assert captured.err == ""
@@ -200,7 +200,7 @@ def test_query_cli_notes_fallback_once(tmp_path: Path, capsys,
     main(["--dir", str(tmp_path), "decide", "storage", "Use SQLite", "--why", "simple"])
     capsys.readouterr()
     monkeypatch.setattr(vectors, "default_embedder", lambda: BrokenEmbedder())
-    main(["--dir", str(tmp_path), "query", "sqlite"])
+    main(["--dir", str(tmp_path), "query", "sqlite", "--json"])
     captured = capsys.readouterr()
     assert len(json.loads(captured.out)["records"]) == 1
     assert captured.err.count("\n") == 1 and "keyword search only" in captured.err

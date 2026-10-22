@@ -47,6 +47,12 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Changed
 
+- The CLI prints readable text instead of JSON for `query`, `query --id`, `decide`,
+  `constrain` and `resolve`, with `--json` for the old output. Output is coloured on a
+  terminal (`NO_COLOR` and `FORCE_COLOR` are honoured) and wraps to its width.
+- `enrich` prints one line per event (time taken and facts found) instead of a counter,
+  so progress also shows in logs and background runs, and it names the events that
+  produced no facts, which usually means the model failed to extract them.
 - Lens prompts have a single source shared by Claude Code and Docker Agent, and no
   longer name host-specific tools. Rerun `init --claude` after deleting
   `.claude/agents/lens-*.md` to pick up the new wording.

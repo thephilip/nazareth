@@ -31,12 +31,13 @@ class FakeGraph:
     def watermark(self):
         return self.store.get("mark")
 
-    def add(self, ep: Episode) -> None:
+    def add(self, ep: Episode) -> int:
         assert self.write, "only enrich may add episodes"
         if self.store.get("fail_on") == ep.event_id:
             raise RuntimeError("LLM returned garbage")
         self.store["episodes"].append(ep)
         self.path.touch()
+        return 0 if ep.event_id in self.store.get("empty", ()) else 2
 
     def set_watermark(self, seq: int, entry_hash: str) -> None:
         self.store["mark"] = (seq, entry_hash)
@@ -105,20 +106,30 @@ def test_resolutions_are_about_the_record(paths: StatePaths, mem: Memory) -> Non
 def test_enrich_sends_everything_once_in_order(mem: Memory, store: dict) -> None:
     _seed(mem)
     out = mem.enrich()
-    assert out == {"sent": 4, "remaining": 0}  # the phase change has nothing to learn
+    assert out == {"sent": 4, "remaining": 0, "no_facts": []}  # phase has nothing to learn
     assert [ep.event_id for ep in store["episodes"]] == \
         [e.id for e in mem.ledger.entries() if e.action != "phase"]
     assert store["mark"][0] == mem.ledger.entries()[-1].seq
-    assert mem.enrich() == {"sent": 0, "remaining": 0}
+    assert mem.enrich() == {"sent": 0, "remaining": 0, "no_facts": []}
     assert store["opens"] == [True, True] and store["closed"] == 2
 
 
 def test_enrich_limit_resumes_where_it_stopped(mem: Memory, store: dict) -> None:
     _seed(mem)
-    assert mem.enrich(limit=1) == {"sent": 1, "remaining": 4}
-    assert mem.enrich(limit=2) == {"sent": 2, "remaining": 1}  # and the phase change
-    assert mem.enrich() == {"sent": 1, "remaining": 0}
+    steps = []
+    assert mem.enrich(limit=1)["remaining"] == 4
+    out = mem.enrich(limit=2, progress=steps.append)
+    assert (out["sent"], out["remaining"]) == (2, 1)  # and the phase change
+    assert [(s.n, s.target, s.facts) for s in steps] == [(1, 2, 2), (2, 2, 2)]
+    assert mem.enrich()["sent"] == 1
     assert len({ep.event_id for ep in store["episodes"]}) == 4
+
+
+def test_enrich_names_events_that_produced_no_facts(mem: Memory, store: dict) -> None:
+    ids = _seed(mem)
+    q_event = mem.ledger.entries()[1].id
+    store["empty"] = {q_event}
+    assert mem.enrich()["no_facts"] == [ids["question"]]
 
 
 def test_failed_episode_keeps_progress(mem: Memory, store: dict) -> None:
@@ -292,7 +303,7 @@ def test_graphiti_end_to_end(paths: StatePaths, monkeypatch) -> None:
     monkeypatch.undo()  # use the real default graph
     mem = Memory(paths, embedder=FakeEmbedder())
     a = mem.decide("storage", "Keep the index in SQLite", "Simple and local", actor=ARCH)
-    assert mem.enrich() == {"sent": 1, "remaining": 0}
+    assert mem.enrich()["sent"] == 1
     facts = mem.facts("SQLite index")
     assert facts and all(src == (a["id"], "decision") for f in facts for src in f.sources)
     Ledger(paths.ledger)  # the ledger is untouched by enrichment

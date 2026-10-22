@@ -169,14 +169,18 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `decide`, `constrain` | Record your own decisions and constraints |
 | `retire <id> --why` | Take a decision or constraint out of effect |
 | `phase [X] [--next Y]` | Show or set the project phase (`--current X` also works) |
-| `query <text>` / `query --id <id>` | Search, or read one item with its supersession chain |
+| `query <text>` / `query --id <id>` | Search (records, questions, events, graph facts), or read one item in full with its links |
 | `history`, `log` | Read the ledger; log a directive |
 | `verify` | Check the hash chain |
 | `rebuild` | Regenerate the index from the ledger and reset vectors |
 | `embed` | Compute semantic search vectors now (needs the `search` extra) |
-| `enrich [--limit N]` | Send new ledger events to the knowledge graph (needs the `graph` extra; calls your LLM) |
+| `enrich [--limit N]` | Send new ledger events to the knowledge graph, one line per event with its time and facts found (needs the `graph` extra; calls your LLM) |
 | `serve` | Run the MCP server (stdio) |
 | `context` | Memory snapshot for agent session start (used by the hook) |
+
+Output is readable text, in colour when it goes to a terminal (set `NO_COLOR` to turn
+colour off, `FORCE_COLOR` to keep it when piping). `status`, `history`, `query`, `decide`,
+`constrain` and `resolve` take `--json` for scripts.
 
 ## MCP tools (for lenses)
 
@@ -201,6 +205,7 @@ non-destructive.
 | `NAZARETH_PROJECT_DIR` | Project root | nearest `.nazareth/`, else git root, else the start dir (`CLAUDE_PROJECT_DIR` under Claude Code, otherwise cwd) |
 | `NAZARETH_LLM_BASE_URL`, `NAZARETH_LLM_API_KEY`, `NAZARETH_LLM_MODEL` | OpenAI-compatible endpoint, key and model for `enrich` (and for the Docker Agent provider example) | unset |
 | `NAZARETH_LLM_SMALL_MODEL` | Model for Graphiti's lighter prompts | `NAZARETH_LLM_MODEL` |
+| `NO_COLOR`, `FORCE_COLOR` | Turn CLI colour off, or on even when output isn't a terminal | colour only on a terminal |
 | `NAZARETH_ACTOR` | Fixed actor for a server's writes; the tools' `actor` argument is ignored when set, and `human` is refused | `agent` |
 
 ## State layout
@@ -246,6 +251,6 @@ See [CHANGELOG.md](CHANGELOG.md).
 5. ~~Graphiti as an optional enrichment layer~~ (`nazareth enrich`)
 6. Signed human events: `ssh-keygen -Y sign` with session-cached approval, verified on
    replay, so a CLI write proves a human was present
-7. Nicer CLI output: clearer layout and colour for `status`, `history`, `query` and the
-   other human commands
+7. ~~Nicer CLI output~~: readable `query` and write results, colour, per-event `enrich`
+   progress
 8. Quality-of-life improvements as they come up in use

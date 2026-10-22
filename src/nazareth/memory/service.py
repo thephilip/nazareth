@@ -22,6 +22,7 @@ import time
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -114,6 +115,18 @@ def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
     return out
 
 
+@dataclass(frozen=True)
+class EnrichStep:
+    """One event sent by `Memory.enrich`, for progress reporting."""
+
+    n: int
+    target: int
+    kind: str
+    id: str
+    seconds: float
+    facts: int
+
+
 class Memory:
     """`embedder` defaults to the search extra's model when it's installed; pass
     None for keyword search only, or any `vectors.Embedder`. `graph` opens a
@@ -187,10 +200,13 @@ class Memory:
                 fcntl.flock(lock, fcntl.LOCK_UN)
 
     def enrich(self, limit: int | None = None,
-               progress: Callable[[int, int], None] | None = None) -> dict[str, Any]:
+               progress: Callable[[EnrichStep], None] | None = None) -> dict[str, Any]:
         """Send ledger events the graph hasn't seen to Graphiti (`nazareth
         enrich`), oldest first, at most `limit` of them. This is the only call
-        that reaches an LLM, and it is never made on the write path."""
+        that reaches an LLM, and it is never made on the write path.
+        `progress` is called after each event sent. The result lists the
+        events that produced no facts, which usually means the model failed
+        to extract any rather than that there was nothing to learn."""
         if self._open_graph is None:
             raise NazarethError("The knowledge graph is turned off for this process.")
         self.index.sync()
@@ -213,21 +229,28 @@ class Memory:
                             "The knowledge graph doesn't match this ledger (it was built from a "
                             "different history). Run `nazareth rebuild`, then `nazareth enrich`.")
                 todo = self.ledger.entries(after_seq=mark[0] if mark else -1)
-                sent, done = 0, 0
-                for e in todo:
-                    ep = graphs.episode(e, self._kind_of)
+                episodes = [graphs.episode(e, self._kind_of) for e in todo]
+                target = sum(ep is not None for ep in episodes)
+                if limit is not None:
+                    target = min(target, limit)
+                sent, done, empty = 0, 0, []
+                for e, ep in zip(todo, episodes, strict=True):
                     if ep is not None:
-                        if limit is not None and sent >= limit:
+                        if sent >= target:
                             break
-                        g.add(ep)
+                        started = time.monotonic()
+                        facts = g.add(ep)
                         sent += 1
+                        if not facts:
+                            empty.append(ep.target[0])
+                        if progress is not None:
+                            progress(EnrichStep(sent, target, ep.target[1], ep.target[0],
+                                                time.monotonic() - started, facts))
                     g.set_watermark(e.seq, e.hash)
                     done += 1
-                    if progress is not None:
-                        progress(done, len(todo))
             finally:
                 g.close()
-        return {"sent": sent, "remaining": len(todo) - done}
+        return {"sent": sent, "remaining": len(todo) - done, "no_facts": empty}
 
     def _kind_of(self, rid: str) -> str | None:
         row = self.index.record(rid)

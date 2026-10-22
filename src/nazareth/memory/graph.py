@@ -112,7 +112,8 @@ class Graph(Protocol):
     def watermark(self) -> tuple[int, str] | None:
         """(seq, hash) of the last ledger event handled, or None if empty."""
 
-    def add(self, ep: Episode) -> None: ...
+    def add(self, ep: Episode) -> int:
+        """Ingest one episode; returns how many facts were extracted from it."""
 
     def set_watermark(self, seq: int, entry_hash: str) -> None: ...
 
@@ -219,13 +220,14 @@ class GraphitiGraph:
         seq, _, entry_hash = (raw.decode() if isinstance(raw, bytes) else raw).partition(":")
         return int(seq), entry_hash
 
-    def add(self, ep: Episode) -> None:
+    def add(self, ep: Episode) -> int:
         from graphiti_core.nodes import EpisodeType
 
-        self._run(self._graphiti.add_episode(
+        result = self._run(self._graphiti.add_episode(
             name=ep.name, episode_body=ep.body, source=EpisodeType.text,
             source_description="nazareth ledger event", group_id=GROUP,
             reference_time=datetime.fromtimestamp(ep.ts, UTC)))
+        return len(result.edges)
 
     def set_watermark(self, seq: int, entry_hash: str) -> None:
         async def save():
