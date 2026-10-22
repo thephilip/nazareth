@@ -1,0 +1,32 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: ${{ matrix.extras }} · Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The core package alone: keyword search, no optional extras.
+          - { python: "3.12", extras: test }
+          - { python: "3.13", extras: test }
+          - { python: "3.14", extras: test }
+          # Everything: semantic search and the knowledge graph (tests use fakes,
+          # never a real model or LLM).
+          - { python: "3.14", extras: dev }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+          activate-environment: true
+      - run: uv pip install -e ".[${{ matrix.extras }}]"
+      - run: ruff check src tests
+        if: matrix.extras == 'dev'
+      - run: pytest -q

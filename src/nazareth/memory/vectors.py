@@ -145,10 +145,24 @@ class VectorStore:
             self._db = None
 
     def reset(self) -> None:
-        """Delete the store; it is rebuilt on the next search or `embed`."""
-        self.close()
-        for suffix in ("", "-wal", "-shm"):
-            Path(f"{self.path}{suffix}").unlink(missing_ok=True)
+        """Empty the store; it is refilled on the next search or `embed`.
+
+        Rows are deleted in place rather than the file unlinked, so lens servers
+        that have it open see the empty store instead of carrying on with an
+        orphaned copy. Only a file SQLite can't use is deleted outright."""
+        if not self.path.exists():
+            self.close()
+            return
+        try:
+            db = self.db
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM vectors")
+            db.execute("DELETE FROM meta")
+            db.execute("COMMIT")
+        except sqlite3.DatabaseError:
+            self.close()
+            for suffix in ("", "-wal", "-shm"):
+                Path(f"{self.path}{suffix}").unlink(missing_ok=True)
 
     def embedder_name(self) -> str | None:
         row = self.db.execute("SELECT value FROM meta WHERE key = 'embedder'").fetchone()

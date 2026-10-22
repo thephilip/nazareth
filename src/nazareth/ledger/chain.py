@@ -159,7 +159,8 @@ class Ledger:
             if _hash(expected, _canonical(entry.canonical_fields())) != entry.hash:
                 return False, f"Chain broken at seq {i} (entry {entry.id})"
             expected = entry.hash
-        return True, f"Chain intact ({len(self._entries)} entries)"
+        n = len(self._entries)
+        return True, f"Chain intact ({n} {'entry' if n == 1 else 'entries'})"
 
     def entries(self, after_seq: int = -1) -> list[LedgerEntry]:
         self.refresh()

@@ -9,6 +9,7 @@ import argparse
 import json
 import sys
 from datetime import datetime
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
@@ -372,6 +373,7 @@ def cmd_log(args: argparse.Namespace) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="nazareth", description="Agent-native project memory")
     parser.add_argument("--dir", help="project directory (default: nearest .nazareth or git root)")
+    parser.add_argument("--version", action="version", version=f"nazareth {version('nazareth')}")
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     def add(name: str, fn, help: str) -> argparse.ArgumentParser:

@@ -3,14 +3,23 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import re
 import sqlite3
 import threading
 
-import numpy as np
 import pytest
 
+try:  # the search extra; tests that need it are marked `needs_search`
+    import numpy as np
+except ImportError:
+    np = None
+
 from nazareth.memory import vectors
+
+needs_search = pytest.mark.skipif(
+    np is None or importlib.util.find_spec("model2vec") is None,
+    reason="needs the search extra")
 
 # Words the fake embedder treats as one concept, so semantic matches are
 # deterministic: "identity" lands next to "actor" though FTS sees no overlap.

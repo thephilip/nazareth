@@ -12,7 +12,7 @@ from nazareth.memory import vectors
 from nazareth.memory.service import Memory, NazarethError
 from nazareth.memory.vectors import VectorStore, rrf
 from nazareth.paths import StatePaths
-from tests.conftest import BrokenEmbedder, FakeEmbedder, FlakyEmbedder
+from tests.conftest import BrokenEmbedder, FakeEmbedder, FlakyEmbedder, needs_search
 
 ARCH = "lens:architect"
 
@@ -33,6 +33,7 @@ def _seed(mem: Memory) -> dict[str, str]:
     return {"identity": a["id"], "storage": b["id"], "question": q["id"], "event": e["id"]}
 
 
+@needs_search
 def test_lazy_embedding_covers_every_searchable_kind(paths: StatePaths) -> None:
     fake = FakeEmbedder()
     mem = Memory(paths, embedder=fake)
@@ -57,6 +58,7 @@ def test_lazy_embedding_covers_every_searchable_kind(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_hybrid_finds_what_keywords_miss(paths: StatePaths) -> None:
     keyword_only = Memory(paths, embedder=None)
     ids = _seed(keyword_only)
@@ -74,6 +76,7 @@ def test_hybrid_finds_what_keywords_miss(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_hybrid_respects_inactive_filter(paths: StatePaths) -> None:
     mem = Memory(paths, embedder=FakeEmbedder())
     old = mem.decide("auth", "Each actor uses an API key", "MVP", actor=ARCH)
@@ -86,6 +89,7 @@ def test_hybrid_respects_inactive_filter(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_reembeds_when_text_changes(tmp_path: Path) -> None:
     store, fake = VectorStore(tmp_path / "v.db"), FakeEmbedder()
     assert store.sync([("a", "decision", "use sqlite"), ("b", "event", "x")], fake) == 2
@@ -97,6 +101,7 @@ def test_reembeds_when_text_changes(tmp_path: Path) -> None:
     store.close()
 
 
+@needs_search
 def test_embedder_change_reembeds_everything(paths: StatePaths) -> None:
     mem = Memory(paths, embedder=FakeEmbedder("fake:v1"))
     _seed(mem)
@@ -113,6 +118,7 @@ def test_embedder_change_reembeds_everything(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_falls_back_to_keywords_when_embedder_unavailable(paths: StatePaths) -> None:
     mem = Memory(paths, embedder=BrokenEmbedder())
     ids = _seed(mem)
@@ -133,6 +139,7 @@ def test_no_extra_means_keyword_search(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_model2vec_load_failure_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
     import huggingface_hub
 
@@ -150,13 +157,14 @@ def test_rrf_fuses_rankings() -> None:
     assert rrf([a, b], []) == [a, b]
 
 
+@needs_search
 def test_rebuild_resets_vectors(paths: StatePaths) -> None:
     mem = Memory(paths, embedder=FakeEmbedder())
     _seed(mem)
     mem.search("ledger")
     assert paths.vectors.exists()
     mem.rebuild()
-    assert not paths.vectors.exists()
+    assert mem.vectors.count() == 0
     assert mem.search("identity")["records"]  # recomputed lazily
     mem.close()
 
@@ -170,6 +178,7 @@ def test_init_gitignores_vectors(tmp_path: Path) -> None:
     assert lines == ["index.db*", "*.lock", "vectors.db*", "graph.db*"]
 
 
+@needs_search
 def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> None:
     main(["--dir", str(tmp_path), "init"])
     mem = Memory(StatePaths(tmp_path), embedder=None)
@@ -191,7 +200,7 @@ def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> N
 
     main(["--dir", str(tmp_path), "rebuild"])
     assert "vectors and graph reset" in capsys.readouterr().out
-    assert not (tmp_path / ".nazareth" / "vectors.db").exists()
+    assert VectorStore(tmp_path / ".nazareth" / "vectors.db").count() == 0
 
 
 def test_query_cli_notes_fallback_once(tmp_path: Path, capsys,
@@ -206,6 +215,7 @@ def test_query_cli_notes_fallback_once(tmp_path: Path, capsys,
     assert captured.err.count("\n") == 1 and "keyword search only" in captured.err
 
 
+@needs_search
 def test_load_failure_disables_vectors_for_the_process(paths: StatePaths) -> None:
     broken = BrokenEmbedder()
     mem = Memory(paths, embedder=broken)
@@ -217,6 +227,7 @@ def test_load_failure_disables_vectors_for_the_process(paths: StatePaths) -> Non
     mem.close()
 
 
+@needs_search
 def test_transient_failure_affects_only_that_search(paths: StatePaths) -> None:
     mem = Memory(paths, embedder=FlakyEmbedder())
     ids = _seed(mem)
@@ -228,6 +239,7 @@ def test_transient_failure_affects_only_that_search(paths: StatePaths) -> None:
     mem.close()
 
 
+@needs_search
 def test_creating_vectors_db_gitignores_it_in_older_projects(paths: StatePaths) -> None:
     gitignore = paths.state / ".gitignore"
     gitignore.write_text("index.db*\n*.lock\n# keep: my notes\nnotes.txt")
@@ -247,3 +259,25 @@ def test_ensure_gitignore_never_creates_state(tmp_path: Path) -> None:
     p = StatePaths(tmp_path)
     p.ensure_gitignore()
     assert not p.state.exists()
+
+
+@needs_search
+def test_rebuild_empties_vectors_for_open_readers(paths: StatePaths) -> None:
+    """Another process's open store must see the reset, not an orphaned file."""
+    writer, reader = Memory(paths, embedder=FakeEmbedder()), Memory(paths, embedder=FakeEmbedder())
+    _seed(writer)
+    reader.search("storage")
+    assert reader.vectors.count() > 0
+    writer.rebuild()
+    assert reader.vectors.count() == 0
+    assert reader.search("database")["records"]  # refilled on the next search
+    assert reader.vectors.count() > 0
+    writer.close()
+    reader.close()
+
+
+def test_reset_replaces_a_corrupt_store(tmp_path: Path) -> None:
+    path = tmp_path / "vectors.db"
+    path.write_bytes(b"not a database" * 100)
+    VectorStore(path).reset()
+    assert not path.exists()

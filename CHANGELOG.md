@@ -11,6 +11,9 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Added
 
+- `nazareth --version`.
+- CI on GitHub Actions: the test suite without any extra on Python 3.12–3.14, and with
+  every extra plus ruff. A `test` extra holds the test-only dependencies.
 - An optional knowledge graph: the `graph` extra adds Graphiti on embedded FalkorDB Lite.
   `nazareth enrich [--limit N]` sends new ledger events to any OpenAI-compatible LLM
   (`NAZARETH_LLM_BASE_URL`, `NAZARETH_LLM_API_KEY`, `NAZARETH_LLM_MODEL`) to extract facts.
@@ -71,6 +74,12 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Fixed
 
+- `rebuild` empties the vector store in place instead of deleting the file, so running
+  lens servers see the reset rather than carrying on with an orphaned copy. A corrupt
+  store is still deleted.
+- The test suite runs without the optional extras, so the keyword-only fallback is
+  tested in a plain install.
+- `verify` says "1 entry", not "1 entries".
 - `init --docker` prints `docker-agent run` when Homebrew's standalone binary is
   installed (the `docker agent` form only exists with Docker Desktop's plugin), and the
   README uses it too.

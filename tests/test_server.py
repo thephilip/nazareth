@@ -10,6 +10,7 @@ from mcp.client.client import Client
 from nazareth.memory.service import Memory
 from nazareth.paths import StatePaths
 from nazareth.server import build_server
+from tests.conftest import needs_search
 
 TOOLS = {"brief", "query", "decide", "constrain", "ask", "log", "phase", "history"}
 
@@ -210,6 +211,7 @@ def test_parallel_calls_on_one_server(paths: StatePaths) -> None:
     assert len(Memory(paths).history(limit=100)["entries"]) >= 16
 
 
+@needs_search
 def test_writes_do_not_wait_for_the_embedding_model(paths: StatePaths, monkeypatch) -> None:
     from nazareth.memory import vectors
     from tests.conftest import GatedEmbedder

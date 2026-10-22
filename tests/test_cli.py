@@ -72,6 +72,15 @@ def test_human_decide_and_query(tmp_path: Path, capsys) -> None:
     assert one["actor"] == "human"
 
 
+def test_version_and_singular_entry(tmp_path: Path, capsys) -> None:
+    with pytest.raises(SystemExit):
+        main(["--version"])
+    assert capsys.readouterr().out.startswith("nazareth 0.")
+    run(tmp_path, capsys, "init")
+    run(tmp_path, capsys, "log", "directive", "Focus on auth")
+    assert run(tmp_path, capsys, "verify").strip() == "Chain intact (1 entry)"
+
+
 def test_verify_fails_on_tamper(tmp_path: Path, capsys) -> None:
     run(tmp_path, capsys, "init")
     run(tmp_path, capsys, "log", "directive", "Focus on auth")

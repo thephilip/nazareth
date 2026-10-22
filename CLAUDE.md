@@ -37,6 +37,11 @@ pytest
 ruff check src tests
 ```
 
+The core package must work without any extra. CI (`.github/workflows/ci.yml`) runs the
+suite with only `.[test]` on Python 3.12–3.14 and with `.[dev]` plus ruff. Tests that need
+the search extra are marked `@needs_search` (from `tests/conftest.py`); graph tests that
+need the real extra use `needs_graph`.
+
 Keep `README.md` and `CHANGELOG.md` (under `## [Unreleased]`) current in the same change as
 the code: user-visible behaviour, commands, dependencies and known limitations.
 

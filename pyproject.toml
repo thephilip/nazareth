@@ -17,13 +17,15 @@ graph = [
     "graphiti-core[falkordblite]>=0.31.2,<0.32",
     "httpx>=0.27",  # graphiti-core imports it without declaring it
 ]
-dev = [
-    "nazareth[graph]",
+test = [
     "pytest",
     "pytest-asyncio",
-    "ruff",
     "pyyaml",
     "jsonschema",
+]
+dev = [
+    "nazareth[graph,test]",
+    "ruff",
 ]
 
 [project.scripts]
