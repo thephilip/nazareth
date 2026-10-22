@@ -1,6 +1,7 @@
 """Tests for the Docker Agent integration (team config, prompts, install)."""
 
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,7 +10,7 @@ import jsonschema
 import pytest
 import yaml
 
-from nazareth.claude_code import LENSES, _agent_file, lens_body
+from nazareth.claude_code import HUMAN_COMMANDS, LENSES, _agent_file, lens_body
 from nazareth.cli import main
 from nazareth.docker_agent import CONFIG, CONFIG_DIR, DEFAULT_MODELS, files, install, render
 from nazareth.memory.service import NazarethError
@@ -87,6 +88,27 @@ def test_bad_model_is_rejected(model: str) -> None:
 def test_write_tools_are_auto_approved() -> None:
     allow = _config()["permissions"]["allow"]
     assert set(allow) == {f"nazareth_{tool}" for tool in WRITE_TOOLS}
+
+
+def _denied(config: dict, cmd: str) -> bool:
+    """docker-agent's matching: an anchored, case-insensitive glob on the argument."""
+    for rule in config["permissions"]["deny"]:
+        tool, _, glob = rule.partition(":cmd=")
+        pattern = ".*".join(map(re.escape, glob.split("*")))
+        if tool == "shell" and re.fullmatch(pattern, cmd, re.IGNORECASE | re.DOTALL):
+            return True
+    return False
+
+
+def test_shell_cannot_run_the_human_cli() -> None:
+    config = _config()
+    assert len(config["permissions"]["deny"]) == len(HUMAN_COMMANDS)
+    for c in HUMAN_COMMANDS:
+        assert _denied(config, f"nazareth {c} x"), c
+    assert _denied(config, "cd src && nazareth answer q-1 yes")
+    for ok in ("nazareth status", "nazareth phase", "nazareth query decide",
+               'grep -n "nazareth log" README.md', "pytest"):
+        assert not _denied(config, ok), ok
 
 
 def test_instruction_files_exist_inside_the_config_dir(tmp_path: Path) -> None:

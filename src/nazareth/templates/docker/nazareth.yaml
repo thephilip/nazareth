@@ -34,6 +34,16 @@ permissions:
     - nazareth_ask
     - nazareth_log
     - nazareth_phase
+  # The nazareth CLI writes as the human, so no agent may run its write commands
+  # from a shell. Agents write through their own memory server instead.
+  deny:
+    - "shell:cmd=*nazareth decide *"
+    - "shell:cmd=*nazareth constrain *"
+    - "shell:cmd=*nazareth answer *"
+    - "shell:cmd=*nazareth resolve *"
+    - "shell:cmd=*nazareth retire *"
+    - "shell:cmd=*nazareth phase *"
+    - "shell:cmd=*nazareth log *"
 
 agents:
   root:

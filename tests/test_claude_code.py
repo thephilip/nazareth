@@ -8,7 +8,9 @@ import yaml
 
 from nazareth.claude_code import (
     CONTEXT_BUDGET,
+    DENY_RULES,
     HOOK_COMMAND,
+    HUMAN_COMMANDS,
     ITEM_CHARS,
     LENSES,
     _agent_file,
@@ -16,7 +18,7 @@ from nazareth.claude_code import (
     path_warning,
     render_context,
 )
-from nazareth.cli import main
+from nazareth.cli import build_parser, main
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths
 
@@ -60,7 +62,16 @@ def test_install_creates_everything(tmp_path: Path) -> None:
     [group] = settings["hooks"]["SessionStart"]
     assert group["hooks"] == [{"type": "command", "command": HOOK_COMMAND}]
     assert "compact" in group["matcher"]
+    assert settings["permissions"]["deny"] == list(DENY_RULES)
     assert report[".mcp.json"] == "added nazareth server"
+
+
+def test_agents_are_denied_the_human_cli() -> None:
+    assert set(HUMAN_COMMANDS) == {"decide", "constrain", "answer", "resolve", "retire",
+                                   "phase", "log"}
+    assert "Bash(nazareth answer:*)" in DENY_RULES
+    [sub] = [a for a in build_parser()._actions if a.dest == "command"]
+    assert set(HUMAN_COMMANDS) <= set(sub.choices)
 
 
 def test_install_preserves_existing_config(tmp_path: Path) -> None:
@@ -69,7 +80,7 @@ def test_install_preserves_existing_config(tmp_path: Path) -> None:
     mine.write_text("my own lens")
     (tmp_path / ".mcp.json").write_text(json.dumps({"mcpServers": {"other": {"command": "x"}}}))
     (tmp_path / ".claude" / "settings.json").write_text(json.dumps({
-        "permissions": {"allow": ["Bash(ls)"]},
+        "permissions": {"allow": ["Bash(ls)"], "deny": ["Bash(rm:*)"]},
         "hooks": {"SessionStart": [{"matcher": "startup",
                                     "hooks": [{"type": "command", "command": "echo hi"}]}]},
     }))
@@ -81,7 +92,8 @@ def test_install_preserves_existing_config(tmp_path: Path) -> None:
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
     assert set(servers) == {"other", "nazareth"}
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert settings["permissions"] == {"allow": ["Bash(ls)"]}
+    assert settings["permissions"] == {"allow": ["Bash(ls)"],
+                                       "deny": ["Bash(rm:*)", *DENY_RULES]}
     commands = [h["command"] for g in settings["hooks"]["SessionStart"] for h in g["hooks"]]
     assert commands == ["echo hi", HOOK_COMMAND]
 
@@ -181,6 +193,8 @@ def test_context_reports_unreadable_memory(tmp_path: Path, capsys) -> None:
     (".mcp.json", '{"mcpServers": []}'),
     (".claude/settings.json", '{"hooks": []}'),
     (".claude/settings.json", '{"hooks": {"SessionStart": [{"hooks": "x"}]}}'),
+    (".claude/settings.json", '{"permissions": []}'),
+    (".claude/settings.json", '{"permissions": {"deny": "Bash(rm:*)"}}'),
 ])
 def test_init_rejects_bad_config_before_writing(tmp_path: Path, capsys, rel: str,
                                                 text: str) -> None:

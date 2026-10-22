@@ -79,5 +79,8 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 - A server started with `NAZARETH_ACTOR` ignores the tools' `actor` argument, and
   `human` is refused over MCP, so a lens can't pose as another lens or as the human.
-  Writing as the human through the CLI from a lens's shell is still possible; see Known
+- `init --claude` adds `permissions.deny` rules, and the Docker Agent config denies the
+  shell, for the CLI commands that write as the human (`decide`, `constrain`, `answer`,
+  `resolve`, `retire`, `phase`, `log`), so agents can't write as the human by accident.
+  The rules match command text, so a deliberate bypass is still possible; see Known
   limitations in the README.

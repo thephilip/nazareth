@@ -20,6 +20,10 @@ LENSES = ("lens-architect", "lens-code", "lens-reviewer")
 MAIN_ACTOR = "agent:main"
 HOOK_COMMAND = "nazareth context"
 HOOK_MATCHER = "startup|resume|clear|compact"
+# CLI commands that write as the human. Agents are denied them in the shell;
+# they write through their own memory server, which never accepts `human`.
+HUMAN_COMMANDS = ("decide", "constrain", "answer", "resolve", "retire", "phase", "log")
+DENY_RULES = tuple(f"Bash(nazareth {c}:*)" for c in HUMAN_COMMANDS)
 _JSON_KINDS = {dict: "object", list: "array"}
 ITEM_CHARS = 400  # longer items are clipped; `query` has the full text
 MORE_CHARS = 48  # room for "- … N more; use `query`."
@@ -137,8 +141,8 @@ def _write(path: Path, text: str) -> None:
 
 
 def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
-    """Add lens subagents, the MCP server, and the SessionStart hook to a
-    project. Existing files and entries are never overwritten, and existing
+    """Add lens subagents, the MCP server, the SessionStart hook, and deny rules
+    for the CLI's human write commands to a project. Existing files and entries are never overwritten, and existing
     config is checked before anything is written; `check_only` stops there.
     Returns (path, what happened) pairs."""
     mcp_path = project / ".mcp.json"
@@ -155,6 +159,10 @@ def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
         _expect(group, dict, settings_rel, "each SessionStart entry")
         for h in _expect(group.get("hooks", []), list, settings_rel, 'each entry\'s "hooks"'):
             _expect(h, dict, settings_rel, "each hook")
+    permissions = _expect(settings.setdefault("permissions", {}), dict, settings_rel,
+                          '"permissions"')
+    deny = _expect(permissions.setdefault("deny", []), list, settings_rel,
+                   '"permissions.deny"')
     if check_only:
         return []
 
@@ -176,15 +184,22 @@ def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
         _write(mcp_path, json.dumps(mcp, indent=2) + "\n")
         report.append((".mcp.json", "added nazareth server"))
 
+    changes = []
     already = any(h.get("command") == HOOK_COMMAND
                   for group in session_start for h in group.get("hooks", []))
-    if already:
-        report.append((settings_rel, "already has the context hook, left as is"))
-    else:
+    if not already:
         session_start.append({"matcher": HOOK_MATCHER,
                               "hooks": [{"type": "command", "command": HOOK_COMMAND}]})
+        changes.append("SessionStart hook: nazareth context")
+    missing = [r for r in DENY_RULES if r not in deny]
+    if missing:
+        deny.extend(missing)
+        changes.append("deny rules for the CLI's human write commands")
+    if changes:
         _write(settings_path, json.dumps(settings, indent=2) + "\n")
-        report.append((settings_rel, "added SessionStart hook: nazareth context"))
+        report.append((settings_rel, "added " + " and ".join(changes)))
+    else:
+        report.append((settings_rel, "already has the context hook and deny rules, left as is"))
 
     return report
 

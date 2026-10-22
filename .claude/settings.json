@@ -11,5 +11,16 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "deny": [
+      "Bash(nazareth decide:*)",
+      "Bash(nazareth constrain:*)",
+      "Bash(nazareth answer:*)",
+      "Bash(nazareth resolve:*)",
+      "Bash(nazareth retire:*)",
+      "Bash(nazareth phase:*)",
+      "Bash(nazareth log:*)"
+    ]
   }
 }

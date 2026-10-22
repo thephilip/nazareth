@@ -103,7 +103,10 @@ This adds, without overwriting anything that already exists:
 - `.claude/settings.json`: a `SessionStart` hook running `nazareth context`, which injects
   the phase, constraints, active decisions and anything waiting on you at startup, resume,
   clear and compaction. Long lists are trimmed with a pointer to `query`, so the
-  pending-work warning always fits.
+  pending-work warning always fits. It also adds `permissions.deny` rules
+  (`Bash(nazareth decide:*)` and the same for `constrain`, `answer`, `resolve`, `retire`,
+  `phase` and `log`), so no agent in the project can write as you from its shell. Your own
+  `!` commands don't go through these rules.
 
 It checks `.mcp.json` and `.claude/settings.json` before writing anything; if either isn't
 valid JSON, or isn't shaped as expected, it stops and changes nothing.
@@ -138,7 +141,9 @@ This adds, without overwriting anything that already exists:
 Routing is plain delegation: `root` hands each request to one lens with Docker Agent's
 `transfer_task`, choosing by the lens descriptions, unless you ask for a sequence such as
 design, then implement, then review. The memory write tools (`decide`, `constrain`,
-`ask`, `log`, `phase`) are auto-approved; the read tools are annotated read-only.
+`ask`, `log`, `phase`) are auto-approved; the read tools are annotated read-only. The
+config denies every agent's shell the CLI's human write commands
+(`shell:cmd=*nazareth decide *` and so on), since the CLI writes as you.
 
 All agents share one model, `lens`. By default it's a `first_available` list (Anthropic,
 then OpenAI, Google, and the local Docker Model Runner), so it uses whichever credentials
@@ -211,13 +216,13 @@ non-destructive.
 
 ## Known limitations
 
-- **Lenses with a shell can write as you.** The CLI records every write as `human`, and
-  the Claude Code lens subagents have Bash (and the Docker Agent code and reviewer lenses
-  have a shell), so a misbehaving or prompt-injected lens could run
-  `nazareth decide …` and skip the pending-review gate. MCP writes are protected; the CLI
-  isn't yet. An environment-variable guard was considered and rejected (agents can unset
-  it, and it would block your own `!` commands); a confirmation an agent can't fake is
-  being explored. Tracked as q-0bfe36.
+- **The human CLI guard stops accidents, not attacks.** The CLI records every write as
+  `human`. The generated deny rules stop agents from running its write commands, but they
+  match command text: a lens that deliberately runs `.venv/bin/nazareth`, `python -m`, or
+  appends to `ledger.jsonl` itself still gets through, since agents run as your OS user.
+  No secret or keyring entry can change that; only a step an agent can't perform can.
+  Signed human events (`ssh-keygen -Y sign` with an agent that approves once per session,
+  checked on replay) are planned as optional hardening.
 - **Docker Agent `--sandbox` is untested.** The generated config expects `nazareth` on the
   host PATH; inside a sandbox it may not be there.
 - **Enrichment is slow and LLM-bound.** Graphiti makes several LLM calls per event. With a
@@ -239,3 +244,5 @@ See [CHANGELOG.md](CHANGELOG.md).
    hooks and choice evaluators were left out: delegation covers the MVP, and evaluators
    need extra hosted endpoints. A model router comes later
 5. ~~Graphiti as an optional enrichment layer~~ (`nazareth enrich`)
+6. Signed human events: `ssh-keygen -Y sign` with session-cached approval, verified on
+   replay, so a CLI write proves a human was present
