@@ -246,3 +246,6 @@ See [CHANGELOG.md](CHANGELOG.md).
 5. ~~Graphiti as an optional enrichment layer~~ (`nazareth enrich`)
 6. Signed human events: `ssh-keygen -Y sign` with session-cached approval, verified on
    replay, so a CLI write proves a human was present
+7. Nicer CLI output: clearer layout and colour for `status`, `history`, `query` and the
+   other human commands
+8. Quality-of-life improvements as they come up in use
