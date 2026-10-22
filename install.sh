@@ -42,7 +42,11 @@ EOF
 
 say() { printf '%s\n' "nazareth: $*"; }
 die() { printf '%s\n' "nazareth: $*" >&2; exit 1; }
-need_arg() { [ $# -ge 2 ] && [ -n "$2" ] || die "$1 needs a value (see --help)"; }
+need_arg() {
+    if [ $# -lt 2 ] || [ -z "$2" ]; then
+        die "$1 needs a value (see --help)"
+    fi
+}
 
 while [ $# -gt 0 ]; do
     case "$1" in
