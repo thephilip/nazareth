@@ -15,6 +15,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
+from nazareth.git_hook import GIT_ACTOR
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
 
@@ -25,7 +26,8 @@ and an append-only log, shared by every agent and the human.
 - Start every task with `brief` to load the phase, constraints, active decisions
   and anything waiting on the human.
 - Constraints are non-negotiable. Active decisions are binding until superseded.
-- Record choices with `decide`. To change one, pass its id in `supersedes`; a
+- Record each choice with `decide` as soon as it's settled, not at the end of
+  the task. To change one, pass its id in `supersedes`; a
   conflicting decision that doesn't is held as pending for the human.
 - When you need the human, `ask` instead of guessing or blocking.
 - `log` what you produce (artifacts, findings, tests) so others can find it.
@@ -46,6 +48,11 @@ def _actor(actor: str | None) -> str:
         raise NazarethError(
             f"Agents can't write as {HUMAN!r}. The human records decisions through the "
             "`nazareth` CLI; leave `actor` unset or name yourself, e.g. 'lens:architect'."
+        )
+    if GIT_ACTOR in (claimed.lower(), fixed.lower()):
+        raise NazarethError(
+            f"{GIT_ACTOR!r} is reserved for the post-commit hook; leave `actor` unset or "
+            "name yourself, e.g. 'lens:architect'."
         )
     return fixed or claimed or "agent"
 

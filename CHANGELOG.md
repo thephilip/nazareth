@@ -7,6 +7,28 @@ same change as the code.
 
 ## [Unreleased]
 
+### Added
+
+- Commit logging: in a git repository, `init` adds a `post-commit` hook that runs
+  `nazareth record-commit`, logging each commit's subject, short sha and a few files as a
+  `commit` event by actor `git`. It never fails a commit and leaves existing hooks and
+  `core.hooksPath` setups alone. The `git` actor is refused over MCP.
+- `init --claude` adds a `PostToolUse` hook running `nazareth nudge`, which reminds the
+  agent to record its decisions after a `git commit` when nothing has been recorded since
+  the previous one.
+
+### Changed
+
+- The session-start snapshot and the MCP server instructions ask agents to record each
+  decision as soon as it's settled, not at the end of the task.
+
+### Fixed
+
+- `init --claude` adds `permissions.allow` rules for the memory servers' tools
+  (`mcp__nazareth`, and `mcp__lens-memory` for the lenses). Without them Claude Code's auto
+  mode refused agents' `decide` and other writes, so nothing got recorded. Rerun
+  `init --claude` in existing projects to add the rules and the new hook.
+
 ## [0.1.0] - 2026-10-22
 
 The first release.

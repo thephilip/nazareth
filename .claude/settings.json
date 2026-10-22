@@ -10,6 +10,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "nazareth nudge"
+          }
+        ]
+      }
     ]
   },
   "permissions": {
@@ -21,6 +32,10 @@
       "Bash(nazareth retire:*)",
       "Bash(nazareth phase:*)",
       "Bash(nazareth log:*)"
+    ],
+    "allow": [
+      "mcp__nazareth",
+      "mcp__lens-memory"
     ]
   }
 }

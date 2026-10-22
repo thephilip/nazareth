@@ -77,7 +77,7 @@ def _event_line(t: Term, e: dict[str, Any], indent: int = 0) -> str:
 
 
 def cmd_init(args: argparse.Namespace) -> None:
-    from nazareth import claude_code, docker_agent
+    from nazareth import claude_code, docker_agent, git_hook
 
     if args.model and not args.docker:
         raise NazarethError("--model sets the Docker Agent lens model; use it with --docker.")
@@ -94,6 +94,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         report += docker_agent.install(paths.project, args.model)
     existed = paths.initialized
     paths.init()
+    report += git_hook.install(paths.project)
     Memory(paths).close()
     print(f"{'Already initialized' if existed else 'Initialized'}: {paths.state}")
     for path, what in report:
@@ -122,6 +123,32 @@ def cmd_context(args: argparse.Namespace) -> None:
     except Exception as e:  # noqa: BLE001 - a traceback at every session start helps nobody
         print(f"## Project memory (nazareth)\nUnavailable: {type(e).__name__}: {e}\n"
               "Ask the human to run `nazareth verify`; don't assume earlier decisions.")
+
+
+def cmd_record_commit(args: argparse.Namespace) -> None:
+    """For the git post-commit hook: log HEAD, silently, if this project uses nazareth."""
+    from nazareth import git_hook
+
+    paths = _paths(args)
+    if paths.initialized:
+        git_hook.record(_memory(args), paths.project)
+
+
+def cmd_nudge(args: argparse.Namespace) -> None:
+    """For Claude Code's PostToolUse hook on Bash: after a commit with nothing
+    recorded since the last one, remind the agent to record its decisions."""
+    from nazareth.claude_code import nudge
+
+    try:
+        command = json.load(sys.stdin).get("tool_input", {}).get("command", "")
+    except (ValueError, AttributeError):
+        return
+    paths = _paths(args)
+    if not isinstance(command, str) or not paths.initialized:
+        return
+    if text := nudge(Ledger(paths.ledger).entries(), command):
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                                 "additionalContext": text}}))
 
 
 def cmd_serve(_args: argparse.Namespace) -> None:
@@ -392,6 +419,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("status", cmd_status, "what needs you, what's decided, what happened").add_argument(
         "--json", action="store_true")
     add("context", cmd_context, "memory snapshot for agent session start (hook)")
+    add("record-commit", cmd_record_commit, "log the latest git commit (post-commit hook)")
+    add("nudge", cmd_nudge, "remind the agent to record decisions after a commit (hook)")
     add("verify", cmd_verify, "check the ledger hash chain")
     add("rebuild", cmd_rebuild, "rebuild the index from the ledger and reset vectors")
     add("embed", cmd_embed, "compute semantic search vectors now (needs the search extra)")

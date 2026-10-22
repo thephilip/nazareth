@@ -8,22 +8,44 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import time
 from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from nazareth.memory.service import NazarethError
+from nazareth.git_hook import COMMIT_ACTION, GIT_ACTOR
+from nazareth.ledger.chain import LedgerEntry
+from nazareth.memory.service import HUMAN, NazarethError
 
 CONTEXT_BUDGET = 9000  # Claude Code caps injected hook output at 10,000 chars
 LENSES = ("lens-architect", "lens-code", "lens-reviewer")
 MAIN_ACTOR = "agent:main"
 HOOK_COMMAND = "nazareth context"
 HOOK_MATCHER = "startup|resume|clear|compact"
+NUDGE_COMMAND = "nazareth nudge"
+HOOKS = (  # (event, matcher, command)
+    ("SessionStart", HOOK_MATCHER, HOOK_COMMAND),
+    ("PostToolUse", "Bash", NUDGE_COMMAND),
+)
+# `commit` as git's subcommand, after any global options (`git -C dir commit`)
+COMMIT_RE = re.compile(r"\bgit(?:\s+-[cC]\s+\S+|\s+-\S+)*\s+commit\b")
+NUDGE_WINDOW = 2 * 3600  # without logged commits, look back this many seconds
+NUDGE = (
+    "nazareth: a commit just landed and nothing has been recorded in project memory since "
+    "the previous one. If this work settled a design choice, record it now with the nazareth "
+    "`decide` tool (one decision per choice, with the why), and `log` findings or follow-ups "
+    "another agent would need. If nothing was decided, carry on."
+)
 # CLI commands that write as the human. Agents are denied them in the shell;
 # they write through their own memory server, which never accepts `human`.
 HUMAN_COMMANDS = ("decide", "constrain", "answer", "resolve", "retire", "phase", "log")
 DENY_RULES = tuple(f"Bash(nazareth {c}:*)" for c in HUMAN_COMMANDS)
+# The memory servers' tools (the main session's and every lens's), approved up
+# front: auto mode's classifier otherwise refuses writes. They only append, under
+# the server's fixed identity, and conflicts are held as pending for the human.
+ALLOW_RULES = ("mcp__nazareth", "mcp__lens-memory")
 _JSON_KINDS = {dict: "object", list: "array"}
 ITEM_CHARS = 400  # longer items are clipped; `query` has the full text
 MORE_CHARS = 48  # room for "- … N more; use `query`."
@@ -47,8 +69,10 @@ def render_context(brief: dict[str, Any]) -> str:
     ]
     tail = [
         "",
-        "Record decisions with `decide` (change one by passing its id in `supersedes`), "
-        "leave questions for the human with `ask`, and `log` artifacts and findings. "
+        "Record as you work, not at the end: `decide` each design choice once it's settled "
+        "(change one by passing its id in `supersedes`), `ask` when you need the human, and "
+        "`log` findings and follow-ups. If the human asks you to record a session, go back "
+        "over its choices and do the same. "
         "Specialist subagents: " + ", ".join(LENSES) + ".",
     ]
     waiting: list[str] = []
@@ -96,6 +120,25 @@ def render_context(brief: dict[str, Any]) -> str:
     return "\n".join(head + body + tail)[:CONTEXT_BUDGET]
 
 
+def nudge(events: list[LedgerEntry], command: str, now: float | None = None) -> str | None:
+    """After a `git commit`, remind the agent to record decisions, unless an
+    agent has written to memory since the previous commit."""
+    if not COMMIT_RE.search(command):
+        return None
+    commits = [i for i, e in enumerate(events)
+               if e.actor == GIT_ACTOR and e.action == COMMIT_ACTION]
+    if commits and commits[-1] == len(events) - 1:
+        commits.pop()  # the post-commit hook just logged this one; look back to the last
+    if commits:
+        since = events[commits[-1] + 1:]
+    else:
+        cutoff = (now or time.time()) - NUDGE_WINDOW
+        since = [e for e in events if e.ts >= cutoff]
+    if any(e.actor not in (HUMAN, GIT_ACTOR) for e in since):
+        return None
+    return NUDGE
+
+
 def template(*parts: str) -> str:
     return resources.files("nazareth").joinpath("templates", *parts).read_text()
 
@@ -141,9 +184,10 @@ def _write(path: Path, text: str) -> None:
 
 
 def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
-    """Add lens subagents, the MCP server, the SessionStart hook, and deny rules
-    for the CLI's human write commands to a project. Existing files and entries are never overwritten, and existing
-    config is checked before anything is written; `check_only` stops there.
+    """Add lens subagents, the MCP server, the context and commit-reminder hooks,
+    allow rules for the memory tools and deny rules for the CLI's human write
+    commands to a project. Existing files and entries are never overwritten, and
+    existing config is checked before anything is written; `check_only` stops there.
     Returns (path, what happened) pairs."""
     mcp_path = project / ".mcp.json"
     mcp = _load_json(mcp_path, ".mcp.json")
@@ -153,14 +197,17 @@ def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
     settings_path = project / settings_rel
     settings = _load_json(settings_path, settings_rel)
     hooks = _expect(settings.setdefault("hooks", {}), dict, settings_rel, '"hooks"')
-    session_start = _expect(hooks.setdefault("SessionStart", []), list, settings_rel,
-                            '"hooks.SessionStart"')
-    for group in session_start:
-        _expect(group, dict, settings_rel, "each SessionStart entry")
-        for h in _expect(group.get("hooks", []), list, settings_rel, 'each entry\'s "hooks"'):
-            _expect(h, dict, settings_rel, "each hook")
+    for event, _, _ in HOOKS:
+        for group in _expect(hooks.setdefault(event, []), list, settings_rel,
+                             f'"hooks.{event}"'):
+            _expect(group, dict, settings_rel, f"each {event} entry")
+            for h in _expect(group.get("hooks", []), list, settings_rel,
+                             'each entry\'s "hooks"'):
+                _expect(h, dict, settings_rel, "each hook")
     permissions = _expect(settings.setdefault("permissions", {}), dict, settings_rel,
                           '"permissions"')
+    allow = _expect(permissions.setdefault("allow", []), list, settings_rel,
+                    '"permissions.allow"')
     deny = _expect(permissions.setdefault("deny", []), list, settings_rel,
                    '"permissions.deny"')
     if check_only:
@@ -185,21 +232,25 @@ def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
         report.append((".mcp.json", "added nazareth server"))
 
     changes = []
-    already = any(h.get("command") == HOOK_COMMAND
-                  for group in session_start for h in group.get("hooks", []))
-    if not already:
-        session_start.append({"matcher": HOOK_MATCHER,
-                              "hooks": [{"type": "command", "command": HOOK_COMMAND}]})
-        changes.append("SessionStart hook: nazareth context")
+    for event, matcher, command in HOOKS:
+        if not any(h.get("command") == command
+                   for group in hooks[event] for h in group.get("hooks", [])):
+            hooks[event].append({"matcher": matcher,
+                                 "hooks": [{"type": "command", "command": command}]})
+            changes.append(f"{event} hook: {command}")
+    missing = [r for r in ALLOW_RULES if r not in allow]
+    if missing:
+        allow.extend(missing)
+        changes.append("allow rules for the memory tools")
     missing = [r for r in DENY_RULES if r not in deny]
     if missing:
         deny.extend(missing)
         changes.append("deny rules for the CLI's human write commands")
     if changes:
         _write(settings_path, json.dumps(settings, indent=2) + "\n")
-        report.append((settings_rel, "added " + " and ".join(changes)))
+        report.append((settings_rel, "added " + ", ".join(changes)))
     else:
-        report.append((settings_rel, "already has the context hook and deny rules, left as is"))
+        report.append((settings_rel, "already has the hooks and permission rules, left as is"))
 
     return report
 

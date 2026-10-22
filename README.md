@@ -45,6 +45,13 @@ nazareth init          # creates .nazareth/ (ledger + derived index)
 nazareth status
 ```
 
+In a git repository, `init` also adds a `post-commit` hook that logs each commit (subject,
+short sha and a few of its files) as a `commit` event by actor `git`, so the memory shows
+what was built even when agents forget to log it. It's local to your clone, never fails a
+commit, and does nothing in a project without `.nazareth/`. An existing `post-commit` hook
+is left alone, as is a project with `core.hooksPath` set (e.g. husky); `init` then says
+which line to add yourself.
+
 ### Semantic search (optional)
 
 ```bash
@@ -106,7 +113,13 @@ This adds, without overwriting anything that already exists:
   pending-work warning always fits. It also adds `permissions.deny` rules
   (`Bash(nazareth decide:*)` and the same for `constrain`, `answer`, `resolve`, `retire`,
   `phase` and `log`), so no agent in the project can write as you from its shell. Your own
-  `!` commands don't go through these rules.
+  `!` commands don't go through these rules. Its `permissions.allow` rules approve the
+  memory servers' tools (`mcp__nazareth`, and `mcp__lens-memory` for the lenses), so auto
+  mode doesn't refuse their writes and they don't stop for prompts: they only append under
+  the server's own identity, and conflicts are held as pending for you.
+- A `PostToolUse` hook on Bash running `nazareth nudge`. After a `git commit`, if no agent
+  has recorded anything since the previous commit, it reminds the agent to `decide` the
+  choices that work settled. It stays silent otherwise, and for every other command.
 
 It checks `.mcp.json` and `.claude/settings.json` before writing anything; if either isn't
 valid JSON, or isn't shaped as expected, it stops and changes nothing.
@@ -182,6 +195,8 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `enrich [--limit N]` | Send new ledger events to the knowledge graph, one line per event with its time and facts found (needs the `graph` extra; calls your LLM) |
 | `serve` | Run the MCP server (stdio) |
 | `context` | Memory snapshot for agent session start (used by the hook) |
+| `record-commit` | Log the latest commit (used by the git `post-commit` hook) |
+| `nudge` | After a commit, remind the agent to record decisions (used by the Claude Code hook) |
 
 Output is readable text, in colour when it goes to a terminal (set `NO_COLOR` to turn
 colour off, `FORCE_COLOR` to keep it when piping). `status`, `history`, `query`, `decide`,

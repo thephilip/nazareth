@@ -166,6 +166,13 @@ def test_human_argument_rejected(paths: StatePaths, claimed: str) -> None:
     assert not [e for e in history["entries"] if e["action"] == "artifact"]
 
 
+def test_git_actor_reserved_for_the_commit_hook(paths: StatePaths) -> None:
+    async def steps(client):
+        return await _call(client, "log", action="artifact", summary="x", actor=" Git")
+
+    assert "post-commit" in _run(paths, steps)["error"]
+
+
 def test_human_env_rejected(paths: StatePaths, monkeypatch) -> None:
     monkeypatch.setenv("NAZARETH_ACTOR", " Human")
 

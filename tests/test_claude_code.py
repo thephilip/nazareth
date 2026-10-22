@@ -7,18 +7,23 @@ import pytest
 import yaml
 
 from nazareth.claude_code import (
+    ALLOW_RULES,
     CONTEXT_BUDGET,
     DENY_RULES,
     HOOK_COMMAND,
     HUMAN_COMMANDS,
     ITEM_CHARS,
     LENSES,
+    NUDGE,
+    NUDGE_COMMAND,
     _agent_file,
     install,
+    nudge,
     path_warning,
     render_context,
 )
 from nazareth.cli import build_parser, main
+from nazareth.ledger.chain import LedgerEntry
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths
 
@@ -62,7 +67,9 @@ def test_install_creates_everything(tmp_path: Path) -> None:
     [group] = settings["hooks"]["SessionStart"]
     assert group["hooks"] == [{"type": "command", "command": HOOK_COMMAND}]
     assert "compact" in group["matcher"]
-    assert settings["permissions"]["deny"] == list(DENY_RULES)
+    [post] = settings["hooks"]["PostToolUse"]
+    assert post == {"matcher": "Bash", "hooks": [{"type": "command", "command": NUDGE_COMMAND}]}
+    assert settings["permissions"] == {"allow": list(ALLOW_RULES), "deny": list(DENY_RULES)}
     assert report[".mcp.json"] == "added nazareth server"
 
 
@@ -72,6 +79,36 @@ def test_agents_are_denied_the_human_cli() -> None:
     assert "Bash(nazareth answer:*)" in DENY_RULES
     [sub] = [a for a in build_parser()._actions if a.dest == "command"]
     assert set(HUMAN_COMMANDS) <= set(sub.choices)
+
+
+def test_memory_tools_are_preapproved() -> None:
+    """The allow rules name every memory server: the main session's and each lens's."""
+    servers = {"mcp__nazareth"}
+    for lens in LENSES:
+        servers |= {f"mcp__{name}" for entry in _frontmatter(_agent_file(lens))["mcpServers"]
+                    for name in entry}
+    assert set(ALLOW_RULES) == servers
+
+
+def _entry(actor: str, action: str = "artifact", ts: float = 1000.0) -> LedgerEntry:
+    return LedgerEntry(id="e", seq=0, ts=ts, actor=actor, action=action, summary="s")
+
+
+def test_nudge_after_a_commit_with_nothing_recorded() -> None:
+    commit = _entry("git", "commit")
+    agent = _entry("agent:main", "decision")
+    assert nudge([commit, _entry("human", "constraint"), commit], "git commit -m x") == NUDGE
+    assert nudge([commit, agent, commit], "rtk git commit -m x") is None
+    # The first logged commit has no previous one, so recent agent writes count.
+    assert nudge([agent, commit], "git -C repo commit -am x", now=2000) is None
+    # Only commits count, and a commit the hook hasn't logged looks back to the last one.
+    assert nudge([commit], "git status && echo commit") is None
+    assert nudge([commit], "git log --grep commit") is None
+    assert nudge([commit], "git -c user.name=x commit -m y") == NUDGE
+    assert nudge([commit, agent], "git commit -m x") is None
+    # Without logged commits (no git hook), only recent agent writes count.
+    assert nudge([_entry("lens:architect", ts=0)], "git commit", now=10_000) == NUDGE
+    assert nudge([_entry("lens:architect", ts=9_000)], "git commit", now=10_000) is None
 
 
 def test_install_preserves_existing_config(tmp_path: Path) -> None:
@@ -92,10 +129,11 @@ def test_install_preserves_existing_config(tmp_path: Path) -> None:
     servers = json.loads((tmp_path / ".mcp.json").read_text())["mcpServers"]
     assert set(servers) == {"other", "nazareth"}
     settings = json.loads((tmp_path / ".claude" / "settings.json").read_text())
-    assert settings["permissions"] == {"allow": ["Bash(ls)"],
+    assert settings["permissions"] == {"allow": ["Bash(ls)", *ALLOW_RULES],
                                        "deny": ["Bash(rm:*)", *DENY_RULES]}
     commands = [h["command"] for g in settings["hooks"]["SessionStart"] for h in g["hooks"]]
     assert commands == ["echo hi", HOOK_COMMAND]
+    assert len(settings["hooks"]["PostToolUse"]) == 1
 
 
 def test_init_claude_via_cli(tmp_path: Path, capsys) -> None:
