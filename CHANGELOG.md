@@ -7,7 +7,9 @@ same change as the code.
 
 ## [Unreleased]
 
-Nothing has been released yet. Everything below will become 0.1.0.
+## [0.1.0] - 2026-10-22
+
+The first release.
 
 ### Added
 
@@ -107,3 +109,6 @@ Nothing has been released yet. Everything below will become 0.1.0.
   `resolve`, `retire`, `phase`, `log`), so agents can't write as the human by accident.
   The rules match command text, so a deliberate bypass is still possible; see Known
   limitations in the README.
+
+[Unreleased]: https://github.com/thephilip/nazareth/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/thephilip/nazareth/releases/tag/v0.1.0
