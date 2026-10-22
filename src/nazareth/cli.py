@@ -36,8 +36,13 @@ def _paths(args: argparse.Namespace) -> StatePaths:
     return StatePaths(Path(args.dir).resolve() if args.dir else find_project_dir())
 
 
+_opened: list[Memory] = []  # closed when the command ends, so the graph server stops
+
+
 def _memory(args: argparse.Namespace) -> Memory:
-    return Memory(_paths(args))
+    mem = Memory(_paths(args))
+    _opened.append(mem)
+    return mem
 
 
 def _print_json(data: Any) -> None:
@@ -345,6 +350,9 @@ def main(argv: list[str] | None = None) -> None:
     except NazarethError as e:
         print(f"nazareth: {e}", file=sys.stderr)
         sys.exit(1)
+    finally:
+        while _opened:
+            _opened.pop().close()
 
 
 if __name__ == "__main__":

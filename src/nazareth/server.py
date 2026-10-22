@@ -160,11 +160,21 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         or an ISO date), `actor`, and `action` (e.g. 'decision', 'finding')."""
         return call(lambda m: m.history(since=since, actor=actor, action=action, limit=limit))
 
+    def close() -> None:
+        with lock:
+            if "mem" in state:
+                state.pop("mem").close()
+
+    server.close_memory = close  # type: ignore[attr-defined]
     return server
 
 
 def run_server() -> None:
-    build_server().run("stdio")
+    server = build_server()
+    try:
+        server.run("stdio")
+    finally:
+        server.close_memory()
 
 
 if __name__ == "__main__":

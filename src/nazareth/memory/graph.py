@@ -18,6 +18,7 @@ import importlib.util
 import os
 import signal
 import threading
+import warnings
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -149,6 +150,10 @@ class GraphitiGraph:
         if embedder is None:
             raise GraphUnavailable("the graph needs the search extra's embedder")
         os.environ["GRAPHITI_TELEMETRY_ENABLED"] = "false"
+        # redislite's exit cleanup calls its async shutdown without awaiting it;
+        # close() already stops the server, so the warning is only noise.
+        warnings.filterwarnings("ignore", r"coroutine '.*shutdown' was never awaited",
+                                RuntimeWarning)
         self.path = path
         self._client_name = f"nazareth-{os.getpid()}"
         self._loop = asyncio.new_event_loop()
@@ -157,6 +162,9 @@ class GraphitiGraph:
         self._thread.start()
         try:
             self._graphiti, self._db = self._run(self._open(embedder, llm))
+        except ImportError as e:
+            self._stop()
+            raise GraphUnavailable(f"graph extra is incomplete ({e})") from e
         except BaseException:
             self._stop()
             raise

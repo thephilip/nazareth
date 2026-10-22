@@ -216,6 +216,38 @@ def test_enrich_cli(paths: StatePaths, store: dict, monkeypatch, capsys) -> None
     assert "Sent 2 ledger events" in out and "left" not in out
 
 
+def test_cli_closes_the_graph(paths: StatePaths, store: dict, monkeypatch, capsys) -> None:
+    monkeypatch.setattr(Memory, "_default_graph",
+                        lambda self, write: FakeGraph(store, paths.graph, write))
+    _seed(Memory(paths))
+    main(["--dir", str(paths.project), "enrich"])
+    main(["--dir", str(paths.project), "query", "backups object"])
+    assert "facts" in capsys.readouterr().out
+    assert store["opens"] == [True, False] and store["closed"] == 2
+
+
+def test_server_closes_the_graph(paths: StatePaths, store: dict, monkeypatch) -> None:
+    import anyio
+    from mcp.client.client import Client
+
+    from nazareth.server import build_server
+
+    monkeypatch.setattr(Memory, "_default_graph",
+                        lambda self, write: FakeGraph(store, paths.graph, write))
+    mem = Memory(paths)
+    _seed(mem)
+    mem.enrich()
+    server = build_server(paths)
+
+    async def go():
+        async with Client(server) as client:
+            await client.call_tool("query", {"text": "backups object"})
+
+    anyio.run(go)
+    server.close_memory()
+    assert store["opens"] == [True, False] and store["closed"] == 2
+
+
 def test_graph_db_is_gitignored(paths: StatePaths) -> None:
     assert "graph.db*" in (paths.state / ".gitignore").read_text().splitlines()
 
@@ -241,6 +273,16 @@ def test_graphiti_store_persists_watermark_and_searches_offline(tmp_path: Path) 
     g.reset()
     assert g.watermark() is None
     g.close()
+
+
+@needs_graph
+def test_incomplete_extra_is_unavailable_not_a_crash(tmp_path: Path, monkeypatch) -> None:
+    async def broken(self, embedder, llm):
+        raise ModuleNotFoundError("No module named 'httpx'")
+
+    monkeypatch.setattr(graphs.GraphitiGraph, "_open", broken)
+    with pytest.raises(graphs.GraphUnavailable, match="incomplete.*httpx"):
+        graphs.GraphitiGraph(tmp_path / "graph.db", FakeEmbedder())
 
 
 @needs_graph

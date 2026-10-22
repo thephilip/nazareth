@@ -201,7 +201,8 @@ class Memory:
             except graphs.GraphUnavailable as e:
                 raise NazarethError(
                     f"Knowledge graph unavailable: {e}. Install the extra with "
-                    "pip install 'nazareth[graph]' and see the README for the LLM settings."
+                    "pip install 'nazareth[graph]' (or reinstall it) and see the README for the "
+                    "LLM settings."
                 ) from e
             try:
                 mark = g.watermark()

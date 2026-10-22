@@ -65,6 +65,10 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Fixed
 
+- The `graph` extra now installs `httpx`, which graphiti-core imports without declaring,
+  and an incomplete extra gives an actionable error instead of a traceback.
+- CLI commands and `nazareth serve` close their memory on exit, so a `query` that read the
+  knowledge graph no longer leaves its embedded database server running.
 - Parallel tool calls from one agent no longer fail with a generic error after their write
   had already been recorded.
 - The first search no longer makes the same lens's writes wait for the model download.
