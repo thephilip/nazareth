@@ -124,9 +124,14 @@ Code asks you to approve `.mcp.json` servers the first time.
 ```bash
 brew install docker-agent      # if you don't have it yet
 nazareth init --docker         # optionally --model provider/model; combines with --claude
-docker agent run .docker-agent/nazareth.yaml             # the coordinator routes for you
-docker agent run .docker-agent/nazareth.yaml -a lens-code # or pick a lens yourself
+docker-agent run .docker-agent/nazareth.yaml             # the coordinator routes for you
+docker-agent run .docker-agent/nazareth.yaml -a lens-code # or pick a lens yourself
 ```
+
+Homebrew installs the standalone `docker-agent`; with Docker Desktop's plugin the command
+is `docker agent run`. `init --docker` prints whichever you have. Tested with Docker Agent
+1.152.0 against an OpenAI-compatible endpoint: routing, per-lens identities and the shell
+deny rules work, including under `--yolo`.
 
 This adds, without overwriting anything that already exists:
 
@@ -152,7 +157,7 @@ OpenAI-compatible endpoint, such as a company LLM gateway, uncomment the `provid
 example in the generated file. It reads `NAZARETH_LLM_BASE_URL` and `NAZARETH_LLM_API_KEY`
 from the environment, so no URL or key lands in the file. For example, keep the key in
 the macOS keychain and export it when you launch:
-`NAZARETH_LLM_API_KEY=$(security find-generic-password -s <name> -w) docker agent run …`.
+`NAZARETH_LLM_API_KEY=$(security find-generic-password -s <name> -w) docker-agent run …`.
 
 Like Claude Code, Docker Agent runs the bare `nazareth`, so it must be on your PATH.
 

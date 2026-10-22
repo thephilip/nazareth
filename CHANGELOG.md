@@ -71,6 +71,10 @@ Nothing has been released yet. Everything below will become 0.1.0.
 
 ### Fixed
 
+- `init --docker` prints `docker-agent run` when Homebrew's standalone binary is
+  installed (the `docker agent` form only exists with Docker Desktop's plugin), and the
+  README uses it too.
+- The Docker Agent coordinator no longer re-logs what a lens already recorded.
 - The `graph` extra now installs `httpx`, which graphiti-core imports without declaring,
   and an incomplete extra gives an actionable error instead of a traceback.
 - CLI commands and `nazareth serve` close their memory on exit, so a `query` that read the

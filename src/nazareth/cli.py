@@ -99,7 +99,8 @@ def cmd_init(args: argparse.Namespace) -> None:
         print(f"  {path}: {what}")
     if args.docker:
         config = f"{docker_agent.CONFIG_DIR}/{docker_agent.CONFIG}"
-        print(f"Run the lenses with `docker agent run {config}` (or add `-a lens-code`).")
+        print(f"Run the lenses with `{docker_agent.command()} run {config}` "
+              "(or add `-a lens-code`).")
         if not docker_agent.found():
             print("Docker Agent isn't installed; install it with `brew install docker-agent`.")
     if (args.claude or args.docker) and (warning := claude_code.path_warning(sys.argv[0])):

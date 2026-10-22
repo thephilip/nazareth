@@ -76,3 +76,9 @@ def found() -> bool:
     """Whether Docker Agent is installed, standalone or as a docker CLI plugin."""
     plugin = Path.home() / ".docker" / "cli-plugins" / "docker-agent"
     return shutil.which("docker-agent") is not None or plugin.exists()
+
+
+def command() -> str:
+    """How to invoke Docker Agent here: Homebrew installs a standalone
+    `docker-agent`; Docker Desktop provides the `docker agent` plugin."""
+    return "docker-agent" if shutil.which("docker-agent") else "docker agent"

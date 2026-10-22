@@ -142,7 +142,7 @@ def test_init_docker_via_cli(tmp_path: Path, capsys) -> None:
     main(["--dir", str(tmp_path), "init", "--docker", "--model", "dmr/ai/qwen3"])
     out = capsys.readouterr().out
     assert f"{CONFIG_DIR}/{CONFIG}: created" in out
-    assert "docker agent run" in out
+    assert "docker agent run" in out or "docker-agent run" in out
     assert (tmp_path / ".nazareth").is_dir()
     assert "dmr/ai/qwen3" in (tmp_path / CONFIG_DIR / CONFIG).read_text()
 
@@ -164,4 +164,8 @@ def test_init_rejects_bad_options_before_writing(tmp_path: Path, capsys, argv) -
 @pytest.mark.skipif(shutil.which("docker-agent") is None, reason="docker-agent not installed")
 def test_docker_agent_accepts_the_config(tmp_path: Path) -> None:
     install(tmp_path)
-    subprocess.run(["docker-agent", "doctor", str(tmp_path / CONFIG_DIR / CONFIG)], check=True)
+    # `debug config` loads and validates the config without needing model credentials
+    # (`doctor` would fail on a machine with none set up).
+    out = subprocess.run(["docker-agent", "debug", "config", str(tmp_path / CONFIG_DIR / CONFIG)],
+                         check=True, capture_output=True, text=True).stdout
+    assert yaml.safe_load(out)["agents"]["root"]["sub_agents"] == list(LENSES)

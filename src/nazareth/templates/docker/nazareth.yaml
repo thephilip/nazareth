@@ -1,6 +1,7 @@
 # Nazareth lenses for Docker Agent, written by `nazareth init --docker`.
 # Run the coordinator:  docker agent run .docker-agent/nazareth.yaml
 # Run one lens:         docker agent run .docker-agent/nazareth.yaml -a lens-code
+# (With Homebrew's standalone binary, use `docker-agent run` instead.)
 #
 # Every agent runs its own `nazareth serve` with a fixed NAZARETH_ACTOR, so the
 # project ledger records which lens wrote what.
