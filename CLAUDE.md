@@ -28,6 +28,8 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
     config template and coordinator prompt
 - `.nazareth/` — Nazareth's own project memory (dogfooding). `ledger.jsonl` is committed;
   run `nazareth status` to see decisions and open questions
+- `install.sh` — POSIX installer (macOS, Linux, WSL) over `uv tool install`; CI's install
+  jobs run it for real, `tests/test_install_script.py` checks its arguments
 - `tests/` — pytest suite; `tests/data/` holds the vendored docker-agent schema
 
 ## Development

@@ -30,3 +30,33 @@ jobs:
       - run: ruff check src tests
         if: matrix.extras == 'dev'
       - run: pytest -q
+
+  install:
+    name: install.sh · ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck install.sh
+        if: runner.os == 'Linux'
+      - run: sh install.sh --from . --yes
+      - name: nazareth works from a fresh shell's PATH
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          nazareth --version
+          cd "$(mktemp -d)" && git init -q && nazareth init --claude && nazareth status
+
+  install-bare:
+    # dash as /bin/sh and no uv: the strictest shell, and the uv bootstrap.
+    name: install.sh · debian, no uv
+    runs-on: ubuntu-latest
+    container: debian:stable-slim
+    steps:
+      - run: apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git
+      - uses: actions/checkout@v4
+      - run: sh install.sh --from . --yes
+      - run: sh install.sh --yes  # the latest release, from GitHub
+      - run: "$HOME/.local/bin/nazareth --version"

@@ -38,8 +38,29 @@ It is built for agents first. Lenses talk to it over MCP; the human steers from 
 
 ## Quick start
 
+On macOS, Linux or WSL:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/thephilip/nazareth/main/install.sh | sh
+```
+
+This installs the latest release with [uv](https://docs.astral.sh/uv/), offering to install
+uv first if it's missing. uv provides Python 3.12+ itself. The `search` extra is included;
+pass options after `sh -s --`, e.g. `| sh -s -- --extras search,graph`, `--core` for no
+extras, or `--version v0.1.0`. Rerun it to upgrade, and use `--uninstall` to remove it
+(project memory is left alone). It won't replace a development install from
+`uv tool install -e .` unless you pass `--force`. Native Windows isn't supported yet: the
+ledger's file locking is Unix-only, so use WSL.
+
+From a checkout, for development:
+
 ```bash
 uv tool install -e .   # or: pipx install -e .  (puts `nazareth` on PATH)
+```
+
+Then, in a project:
+
+```bash
 cd your-project
 nazareth init          # creates .nazareth/ (ledger + derived index)
 nazareth status

@@ -9,6 +9,11 @@ same change as the code.
 
 ### Added
 
+- `install.sh` for macOS, Linux and WSL (`curl -LsSf …/install.sh | sh`): installs the
+  latest release with uv, offering to install uv first, with `--extras`, `--core`,
+  `--version`, `--uninstall`, and a guard against replacing a development install. CI
+  runs shellcheck and real installs on Ubuntu, macOS and a bare Debian container.
+
 - Commit logging: in a git repository, `init` adds a `post-commit` hook that runs
   `nazareth record-commit`, logging each commit's subject, short sha and a few files as a
   `commit` event by actor `git`. It never fails a commit and leaves existing hooks and
