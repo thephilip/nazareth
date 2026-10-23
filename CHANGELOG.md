@@ -7,6 +7,8 @@ same change as the code.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-23
+
 ### Added
 
 - `NAZARETH_LLM_REASONING_EFFORT` sends `reasoning_effort` with every `enrich` request.
@@ -158,6 +160,7 @@ The first release.
   The rules match command text, so a deliberate bypass is still possible; see Known
   limitations in the README.
 
-[Unreleased]: https://github.com/thephilip/nazareth/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/thephilip/nazareth/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/thephilip/nazareth/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/thephilip/nazareth/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/thephilip/nazareth/releases/tag/v0.1.0
