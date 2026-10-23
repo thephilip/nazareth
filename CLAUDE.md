@@ -21,6 +21,8 @@ for decisions/constraints/questions, MCP server for agent lenses, CLI for the hu
   - `paths.py` — Finds the project's `.nazareth/` state dir
   - `claude_code.py` — `init --claude` installer, `nazareth context` (SessionStart hook output)
     and the post-commit `nudge`
+  - `workflows.py` — the plan/review/wrapup workflows (`templates/workflows/`), offered as
+    MCP prompts, Claude Code skills and `nazareth prompt`
   - `git_hook.py` — the git `post-commit` hook `init` installs, and `record-commit`
   - `docker_agent.py` — `init --docker` installer: Docker Agent team config and lens prompts
   - `templates/lenses/` — Host-neutral lens prompts (single source for both hosts)

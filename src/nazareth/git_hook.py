@@ -11,10 +11,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from nazareth.memory.service import Memory, NazarethError
+from nazareth.memory.service import COMMIT_ACTION, GIT_ACTOR, Memory, NazarethError
 
-GIT_ACTOR = "git"
-COMMIT_ACTION = "commit"
+__all__ = ["COMMIT_ACTION", "GIT_ACTOR", "install", "record"]
 HOOK_NAME = "post-commit"
 HOOK_MARKER = "nazareth record-commit"
 HOOK_SCRIPT = f"""#!/bin/sh

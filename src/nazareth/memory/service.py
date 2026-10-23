@@ -34,6 +34,13 @@ from nazareth.paths import StatePaths
 
 HUMAN = "human"
 BRIEF_DECISION_LIMIT = 100
+GIT_ACTOR = "git"  # the post-commit hook (git_hook.py); refused over MCP like HUMAN
+COMMIT_ACTION = "commit"
+# next_steps thresholds
+STALE_PHASE_COMMITS = 5
+REVIEW_DUE_COMMITS = 3
+GRAPH_BEHIND_EVENTS = 20
+REVIEW_ACTIONS = frozenset({"finding", "review"})
 SEARCH_CANDIDATES = 200
 VECTOR_CANDIDATES = 50
 GRAPH_FACTS = 20
@@ -231,8 +238,10 @@ class Memory:
                 hint = (install_hint("search,graph") if e.missing_extra else
                         "See the README's knowledge graph section for the LLM settings.")
                 raise NazarethError(f"Knowledge graph unavailable: {e}. {hint}") from e
+            last: int | None = None  # the last seq in the graph, for graph_mark
             try:
                 mark = g.watermark()
+                last = mark[0] if mark else None
                 if mark is not None:
                     seen = self.ledger.entries(after_seq=mark[0] - 1)[:1]
                     if not seen or seen[0].hash != mark[1]:
@@ -267,8 +276,11 @@ class Memory:
                                                 time.monotonic() - started, facts))
                     g.set_watermark(e.seq, e.hash)
                     done += 1
+                    last = e.seq
             finally:
                 g.close()
+                if last is not None:  # read by next_steps without opening the graph
+                    self.paths.graph_mark.write_text(f"{last}\n")
         return {"sent": sent, "remaining": len(todo) - done, "no_facts": empty}
 
     def _kind_of(self, rid: str) -> str | None:
@@ -695,4 +707,46 @@ class Memory:
         if answered:
             out["recent_answers"] = [_question_out(q) for q in answered]
         out["recent_activity"] = [_event_out(e) for e in self.ledger.query(limit=10)]
+        if steps := self.next_steps(out["phase"]):
+            out["next_steps"] = steps
         return out
+
+    def next_steps(self, phase: dict[str, str] | None = None) -> list[dict[str, str]]:
+        """Housekeeping that's easy to forget, worked out from the ledger alone (no
+        LLM, and the graph is never opened): a phase that no longer moves, commits
+        nobody reviewed, and a knowledge graph falling behind."""
+        entries = self.ledger.entries()
+
+        def commits_since(is_mark: Callable[[LedgerEntry], bool]) -> int:
+            n = 0
+            for e in reversed(entries):
+                if is_mark(e):
+                    break
+                n += e.actor == GIT_ACTOR and e.action == COMMIT_ACTION
+            return n
+
+        steps = []
+        phase = phase or self.phase()
+        if (n := commits_since(lambda e: e.action == "phase")) >= STALE_PHASE_COMMITS:
+            steps.append({
+                "text": f"The phase is still `{phase['current']}` after {n} commits; if the "
+                        "work has moved on, set it so every session starts with the right "
+                        "picture.",
+                "command": "nazareth phase <current> --next <next>"})
+        if (n := commits_since(lambda e: e.action in REVIEW_ACTIONS)) >= REVIEW_DUE_COMMITS:
+            steps.append({
+                "text": f"{n} commits since the last review. Run the review workflow "
+                        "(`/nazareth-review` in Claude Code).",
+                "command": "nazareth prompt review"})
+        mark = self.paths.graph_mark
+        if self.paths.graph.exists() and mark.exists():
+            try:
+                done = int(mark.read_text().strip())
+            except ValueError:
+                done = None
+            behind = sum(e.seq > done for e in entries) if done is not None else 0
+            if behind >= GRAPH_BEHIND_EVENTS:
+                steps.append({
+                    "text": f"{behind} ledger events aren't in the knowledge graph yet.",
+                    "command": "nazareth enrich  (with your LLM settings)"})
+        return steps

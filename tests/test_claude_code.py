@@ -191,7 +191,7 @@ def test_context_keeps_warning_and_instructions_when_constraints_overflow() -> N
     text = render_context(brief)
     assert len(text) <= CONTEXT_BUDGET
     assert "Don't rely on pending decisions." in text
-    assert text.rstrip().endswith("lens-reviewer.")
+    assert "lens-reviewer." in text and text.rstrip().endswith("end of a session.")
     shown = text.count("- con-")
     assert 0 < shown < 40
     assert f"… {40 - shown} more; use `query`" in text

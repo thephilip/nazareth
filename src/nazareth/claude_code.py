@@ -15,9 +15,9 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
-from nazareth.git_hook import COMMIT_ACTION, GIT_ACTOR
+from nazareth import workflows
 from nazareth.ledger.chain import LedgerEntry
-from nazareth.memory.service import HUMAN, NazarethError
+from nazareth.memory.service import COMMIT_ACTION, GIT_ACTOR, HUMAN, NazarethError
 
 CONTEXT_BUDGET = 9000  # Claude Code caps injected hook output at 10,000 chars
 LENSES = ("lens-architect", "lens-code", "lens-reviewer")
@@ -55,10 +55,11 @@ def _clip(text: str) -> str:
     return text if len(text) <= ITEM_CHARS else text[: ITEM_CHARS - 1] + "…"
 
 
-def render_context(brief: dict[str, Any]) -> str:
+def render_context(brief: dict[str, Any], lenses: tuple[str, ...] = LENSES) -> str:
     """A compact, agent-facing snapshot of project memory for session start.
+    `lenses` are the lens subagents this project has.
 
-    The header, the pending-work warning and the closing instructions always fit;
+    The header, the pending-work warning, next steps and the closing instructions always fit;
     constraints, then decisions, then recent answers share what's left, each
     saying how many items it left out."""
     ph = brief["phase"]
@@ -73,13 +74,19 @@ def render_context(brief: dict[str, Any]) -> str:
         "(change one by passing its id in `supersedes`), `ask` when you need the human, and "
         "`log` findings and follow-ups. If the human asks you to record a session, go back "
         "over its choices and do the same. "
-        "Specialist subagents: " + ", ".join(LENSES) + ".",
+        + (f"Specialist subagents: {', '.join(lenses)}. " if lenses else "")
+        + "Suggest the human's workflows when they're due: `/nazareth-plan` before building "
+        "from specs, `/nazareth-review` before pushing, `/nazareth-wrapup` at the end of a "
+        "session.",
     ]
     waiting: list[str] = []
     pending, open_q = brief.get("pending_review", []), brief.get("open_questions", [])
     if pending or open_q:
         waiting = ["", (f"**Waiting on the human:** {len(pending)} pending decision(s), "
                         f"{len(open_q)} open question(s). Don't rely on pending decisions.")]
+    if steps := brief.get("next_steps"):
+        waiting += ["", "**Next steps to suggest to the human** (early, briefly):",
+                    *(_clip(f"- {s['text']} `{s['command']}`") for s in steps)]
 
     answers = brief.get("recent_answers", [])[:5]
     parts = [  # (title, lines, total, where to find the rest), in budget priority order
@@ -183,11 +190,18 @@ def _write(path: Path, text: str) -> None:
     os.replace(tmp, path)
 
 
-def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
-    """Add lens subagents, the MCP server, the context and commit-reminder hooks,
-    allow rules for the memory tools and deny rules for the CLI's human write
-    commands to a project. Existing files and entries are never overwritten, and
-    existing config is checked before anything is written; `check_only` stops there.
+def installed_lenses(project: Path) -> tuple[str, ...]:
+    return tuple(lens for lens in LENSES
+                 if (project / ".claude" / "agents" / f"{lens}.md").exists())
+
+
+def install(project: Path, check_only: bool = False,
+            lenses: tuple[str, ...] = LENSES) -> list[tuple[str, str]]:
+    """Add lens subagents (`lenses`), the workflow skills, the MCP server, the
+    context and commit-reminder hooks, allow rules for the memory tools and deny
+    rules for the CLI's human write commands to a project. Existing files and
+    entries are never overwritten, and existing config is checked before anything
+    is written; `check_only` stops there.
     Returns (path, what happened) pairs."""
     mcp_path = project / ".mcp.json"
     mcp = _load_json(mcp_path, ".mcp.json")
@@ -214,13 +228,16 @@ def install(project: Path, check_only: bool = False) -> list[tuple[str, str]]:
         return []
 
     report: list[tuple[str, str]] = []
-    for lens in LENSES:
-        path = project / ".claude" / "agents" / f"{lens}.md"
+    files = [(project / ".claude" / "agents" / f"{lens}.md", _agent_file(lens))
+             for lens in lenses]
+    files += [(project / ".claude" / "skills" / f"nazareth-{name}" / "SKILL.md",
+               workflows.skill_file(name)) for name in workflows.WORKFLOWS]
+    for path, text in files:
         rel = str(path.relative_to(project))
         if path.exists():
             report.append((rel, "exists, left as is"))
         else:
-            _write(path, _agent_file(lens))
+            _write(path, text)
             report.append((rel, "created"))
 
     if "nazareth" in servers:

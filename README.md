@@ -128,7 +128,10 @@ This adds, without overwriting anything that already exists:
 
 - `.claude/agents/lens-{architect,code,reviewer}.md`: lens subagents. Each runs its own
   `nazareth serve` with a fixed `NAZARETH_ACTOR`, and is denied the main session's
-  nazareth tools so it can't write under the wrong identity.
+  nazareth tools so it can't write under the wrong identity. `--lenses architect,reviewer`
+  installs only those, e.g. for a project where agents shouldn't edit code.
+- `.claude/skills/nazareth-{plan,review,wrapup}/SKILL.md`: the [workflows](#workflows) as
+  slash commands (`/nazareth-plan`, `/nazareth-review`, `/nazareth-wrapup`).
 - `.mcp.json`: the `nazareth` server for the main session (actor `agent:main`).
 - `.claude/settings.json`: a `SessionStart` hook running `nazareth context`, which injects
   the phase, constraints, active decisions and anything waiting on you at startup, resume,
@@ -154,6 +157,37 @@ lenses and hook; `.claude/settings.local.json` is per-user and stays out of git.
 
 Lens subagents' own servers only load in folders you've trusted in Claude Code, and Claude
 Code asks you to approve `.mcp.json` servers the first time.
+
+## Workflows
+
+Three workflows cover the steps that are easy to forget:
+
+| Workflow | When | What the agent does |
+|---|---|---|
+| `plan` | Before building from specs or a feature description | Records the choices the material settles, supersedes decisions it changes, and asks about open points |
+| `review` | Before pushing | Checks the change against decisions and constraints, logs findings with a severity (or one `review` event when clean) |
+| `wrapup` | At the end of a session | Records decisions not yet recorded, logs what was built and found, and tells you what waits on you |
+
+Each takes an optional focus, such as spec files. They're written once, without
+host-specific wording, and offered three ways:
+
+- **Claude Code:** `/nazareth-plan docs/spec/X.md`, `/nazareth-review`, `/nazareth-wrapup`
+  (skills from `init --claude`). Claude may also pick them up on its own when they fit.
+- **Any MCP host that lists prompts:** the `nazareth` server offers them as the prompts
+  `plan`, `review` and `wrapup` (Claude Code also shows these, as `/mcp__nazareth__plan`).
+- **Any other agent:** `nazareth prompt review` prints the text to paste, or to pass on,
+  e.g. `pi "$(nazareth prompt plan docs/spec/X.md)"`.
+
+You don't have to remember when they're due. `nazareth status` ends with **NEXT STEPS**
+worked out from the ledger: the phase hasn't changed in 5 commits, 3 commits have gone
+by without a review, or 20 events aren't in the knowledge graph yet. `brief` returns the
+same list as `next_steps`, and the server's instructions and the session-start snapshot
+tell agents to pass it on to you.
+
+An agent host without MCP can still read memory from the CLI (`status`, `query`,
+`history`, `prompt`), but the CLI writes as you: only the Claude Code and Docker Agent
+setups stop agents from running its write commands, so in other hosts give agents the MCP
+server instead.
 
 ### Docker Agent
 
@@ -203,7 +237,8 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 
 | Command | Purpose |
 |---|---|
-| `init [--claude] [--docker [--model M]]` | Create `.nazareth/`; add the Claude Code and/or Docker Agent integration |
+| `init [--claude [--lenses L]] [--docker [--model M]]` | Create `.nazareth/`; add the Claude Code and/or Docker Agent integration (`--lenses architect,reviewer` picks the Claude Code lenses) |
+| `prompt plan\|review\|wrapup [focus…]` | Print a [workflow](#workflows) prompt for any agent |
 | `status` | What needs you, constraints, decisions, recent activity |
 | `answer <q-id> "..."` | Answer a lens's question |
 | `resolve <id> --accept\|--reject` | Settle a pending decision |
@@ -239,7 +274,8 @@ colour off, `FORCE_COLOR` to keep it when piping). `status`, `history`, `query`,
 | `history` | Read the ledger |
 
 `brief`, `query` and `history` carry the MCP read-only hint; the others are marked
-non-destructive.
+non-destructive. The server also offers the [workflows](#workflows) as the MCP prompts
+`plan`, `review` and `wrapup`, each with an optional `focus` argument.
 
 ## Environment
 

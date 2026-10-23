@@ -17,6 +17,8 @@ from nazareth.ledger.chain import Ledger
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
 from nazareth.term import Term
+from nazareth.workflows import WORKFLOWS
+from nazareth.workflows import render as render_workflow
 
 
 def _when(iso: str | None) -> str:
@@ -81,6 +83,16 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     if args.model and not args.docker:
         raise NazarethError("--model sets the Docker Agent lens model; use it with --docker.")
+    lenses = claude_code.LENSES
+    if args.lenses is not None:
+        if not args.claude:
+            raise NazarethError("--lenses picks the Claude Code lens subagents; use it with "
+                                "--claude.")
+        names = [n.strip() for n in args.lenses.split(",") if n.strip()]
+        lenses = tuple(f"lens-{n.removeprefix('lens-')}" for n in names)
+        if unknown := [n for n in lenses if n not in claude_code.LENSES]:
+            raise NazarethError(f"unknown lens {', '.join(unknown)}; choose from "
+                                "architect, code, reviewer.")
     paths = _paths(args)
     # Everything that can fail is checked first: the Claude Code config and the
     # Docker model, so a bad one stops init before anything (including
@@ -89,7 +101,7 @@ def cmd_init(args: argparse.Namespace) -> None:
         claude_code.install(paths.project, check_only=True)
     if args.docker:
         docker_agent.render(args.model)
-    report = claude_code.install(paths.project) if args.claude else []
+    report = claude_code.install(paths.project, lenses=lenses) if args.claude else []
     if args.docker:
         report += docker_agent.install(paths.project, args.model)
     existed = paths.initialized
@@ -118,11 +130,17 @@ def cmd_context(args: argparse.Namespace) -> None:
     if not paths.initialized:
         return
     try:
+        from nazareth.claude_code import installed_lenses
+
         mem = Memory(paths)
-        print(render_context(mem.brief()))
+        print(render_context(mem.brief(), installed_lenses(paths.project)))
     except Exception as e:  # noqa: BLE001 - a traceback at every session start helps nobody
         print(f"## Project memory (nazareth)\nUnavailable: {type(e).__name__}: {e}\n"
               "Ask the human to run `nazareth verify`; don't assume earlier decisions.")
+
+
+def cmd_prompt(args: argparse.Namespace) -> None:
+    print(render_workflow(args.workflow, " ".join(args.focus)))
 
 
 def cmd_record_commit(args: argparse.Namespace) -> None:
@@ -243,6 +261,11 @@ def cmd_status(args: argparse.Namespace) -> None:
                      "nazareth resolve <id> --accept|--reject"))
     else:
         print(f"NEEDS YOU: {t.ok('nothing')}")
+    if b.get("next_steps"):
+        print("\n" + t.heading("NEXT STEPS"))
+        for s in b["next_steps"]:
+            print(f"  • {t.clip(s['text'], t.width - 4)}")
+            print(t.meta(f"    → {s['command']}"))
 
     for title, rows in (("CONSTRAINTS", b["constraints"]), ("DECISIONS", b["decisions"])):
         print(f"\n{t.heading(title)} {t.meta(f'({len(rows)})')}")
@@ -424,12 +447,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also add lens subagents, the MCP server and a context hook for Claude Code")
     p.add_argument("--docker", action="store_true",
                    help="also add a Docker Agent team config with a coordinator and the lenses")
+    p.add_argument("--lenses", metavar="LIST",
+                   help="Claude Code lenses to add, e.g. architect,reviewer (default: all)")
     p.add_argument("--model", metavar="PROVIDER/MODEL",
                    help="model for the Docker Agent lenses (default: first with credentials)")
     add("serve", cmd_serve, "run the MCP memory server (stdio)")
     add("status", cmd_status, "what needs you, what's decided, what happened").add_argument(
         "--json", action="store_true")
     add("context", cmd_context, "memory snapshot for agent session start (hook)")
+    p = add("prompt", cmd_prompt, "print a workflow prompt for any agent (plan, review, wrapup)")
+    p.add_argument("workflow", choices=sorted(WORKFLOWS))
+    p.add_argument("focus", nargs="*", help="what to focus on, e.g. spec files")
     add("record-commit", cmd_record_commit, "log the latest git commit (post-commit hook)")
     add("nudge", cmd_nudge, "remind the agent to record decisions after a commit (hook)")
     add("verify", cmd_verify, "check the ledger hash chain")

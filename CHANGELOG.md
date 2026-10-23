@@ -7,6 +7,20 @@ same change as the code.
 
 ## [Unreleased]
 
+### Added
+
+- Workflows for the steps that are easy to forget: `plan` (before building from specs),
+  `review` (before pushing) and `wrapup` (end of a session). They're written once and
+  offered as Claude Code skills (`/nazareth-plan`, `/nazareth-review`, `/nazareth-wrapup`,
+  installed by `init --claude`), as MCP prompts from `nazareth serve` for any host that
+  lists prompts, and as text from `nazareth prompt <workflow> [focus…]` for any other agent.
+- Next steps: `nazareth status` ends with what's due, worked out from the ledger without an
+  LLM: a phase unchanged for 5 commits, 3 commits without a review, or 20 events not yet in
+  the knowledge graph. `brief` returns them as `next_steps`, and the session-start snapshot
+  and server instructions tell agents to pass them on to the human.
+- `init --claude --lenses architect,reviewer` installs only the named lens subagents, so
+  rerunning `init --claude` in such a project doesn't bring the others back.
+
 ### Changed
 
 - `enrich` warns about missing facts only for decisions, constraints and questions, which

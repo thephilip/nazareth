@@ -15,8 +15,8 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
-from nazareth.git_hook import GIT_ACTOR
-from nazareth.memory.service import HUMAN, Memory, NazarethError
+from nazareth import workflows
+from nazareth.memory.service import GIT_ACTOR, HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
 
 INSTRUCTIONS = """\
@@ -31,6 +31,8 @@ and an append-only log, shared by every agent and the human.
   conflicting decision that doesn't is held as pending for the human.
 - When you need the human, `ask` instead of guessing or blocking.
 - `log` what you produce (artifacts, findings, tests) so others can find it.
+- If `brief` returns `next_steps`, pass them on to the human early and briefly.
+  The prompts `plan`, `review` and `wrapup` hold the workflows they name.
 """
 
 # Hosts use these to skip approval for reads; Docker Agent's readonly toolsets keep
@@ -166,6 +168,15 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
         """Read the ledger, newest last. Filter by `since` ('30m', '8h', '7d'
         or an ISO date), `actor`, and `action` (e.g. 'decision', 'finding')."""
         return call(lambda m: m.history(since=since, actor=actor, action=action, limit=limit))
+
+    def add_prompt(name: str, description: str) -> None:
+        def prompt(focus: str = "") -> str:
+            return workflows.render(name, focus)
+
+        server.prompt(name=name, description=description)(prompt)
+
+    for name, workflow in workflows.WORKFLOWS.items():
+        add_prompt(name, workflow.description)
 
     def close() -> None:
         with lock:

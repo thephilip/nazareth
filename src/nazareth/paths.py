@@ -55,6 +55,11 @@ class StatePaths:
         return self.state / "graph.db"
 
     @property
+    def graph_mark(self) -> Path:
+        """How far enrich got, for `next_steps` (graph.db* is derived and gitignored)."""
+        return self.state / "graph.db.mark"
+
+    @property
     def graph_lock(self) -> Path:
         return self.state / "graph.lock"
 
