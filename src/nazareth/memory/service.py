@@ -247,7 +247,15 @@ class Memory:
                         if sent >= target:
                             break
                         started = time.monotonic()
-                        facts = g.add(ep)
+                        try:
+                            facts = g.add(ep)
+                        except graphs.EnrichTimeout as e:
+                            raise NazarethError(
+                                f"Stopped at {ep.target[1]} {ep.target[0]}: {e}. The LLM is "
+                                "probably failing or overloaded (see its errors above); for a "
+                                f"reasoning model, try {graphs.REASONING_ENV}=low. Events "
+                                f"before it are saved, so rerun `nazareth enrich` to resume, "
+                                f"or raise {graphs.TIMEOUT_ENV}.") from e
                         sent += 1
                         if not facts:
                             empty.append(ep.target[0])

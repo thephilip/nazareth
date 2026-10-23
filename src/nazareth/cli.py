@@ -192,7 +192,12 @@ def cmd_enrich(args: argparse.Namespace) -> None:
 
     print(t.meta("Sending ledger events to the knowledge graph; each takes several LLM calls."),
           flush=True)
-    out = _memory(args).enrich(limit=args.limit, progress=progress)
+    try:
+        out = _memory(args).enrich(limit=args.limit, progress=progress)
+    except KeyboardInterrupt:
+        print("\nInterrupted. Events already sent are saved; rerun `nazareth enrich` to "
+              "continue.", file=sys.stderr)
+        sys.exit(130)
     more = f"; {out['remaining']} left, run again to continue" if out["remaining"] else ""
     print(f"Sent {out['sent']} ledger events to the knowledge graph{more}.")
     if out["no_facts"]:
@@ -497,6 +502,9 @@ def main(argv: list[str] | None = None) -> None:
     except NazarethError as e:
         print(f"nazareth: {e}", file=sys.stderr)
         sys.exit(1)
+    except KeyboardInterrupt:
+        print("\nnazareth: interrupted", file=sys.stderr)
+        sys.exit(130)
     finally:
         while _opened:
             _opened.pop().close()

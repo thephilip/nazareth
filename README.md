@@ -248,6 +248,8 @@ non-destructive.
 | `NAZARETH_PROJECT_DIR` | Project root | nearest `.nazareth/`, else git root, else the start dir (`CLAUDE_PROJECT_DIR` under Claude Code, otherwise cwd) |
 | `NAZARETH_LLM_BASE_URL`, `NAZARETH_LLM_API_KEY`, `NAZARETH_LLM_MODEL` | OpenAI-compatible endpoint, key and model for `enrich` (and for the Docker Agent provider example) | unset |
 | `NAZARETH_LLM_SMALL_MODEL` | Model for Graphiti's lighter prompts | `NAZARETH_LLM_MODEL` |
+| `NAZARETH_LLM_REASONING_EFFORT` | Sent as `reasoning_effort` (e.g. `low`) with every `enrich` request. Set it for reasoning models such as GLM or DeepSeek, which otherwise think at length on each extraction prompt: slower, and sometimes the answer comes back empty | unset (the model's default) |
+| `NAZARETH_ENRICH_TIMEOUT` | Seconds one event may take, including Graphiti's retries, before `enrich` stops with what it has saved | `600` |
 | `NO_COLOR`, `FORCE_COLOR` | Turn CLI colour off, or on even when output isn't a terminal | colour only on a terminal |
 | `NAZARETH_ACTOR` | Fixed actor for a server's writes; the tools' `actor` argument is ignored when set, and `human` is refused | `agent` |
 

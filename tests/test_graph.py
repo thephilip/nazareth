@@ -35,6 +35,10 @@ class FakeGraph:
         assert self.write, "only enrich may add episodes"
         if self.store.get("fail_on") == ep.event_id:
             raise RuntimeError("LLM returned garbage")
+        if self.store.get("interrupt_on") == ep.event_id:
+            raise KeyboardInterrupt
+        if self.store.get("slow_on") == ep.event_id:
+            raise graphs.EnrichTimeout("no answer within 600s")
         self.store["episodes"].append(ep)
         self.path.touch()
         return 0 if ep.event_id in self.store.get("empty", ()) else 2
@@ -164,6 +168,66 @@ def test_enrich_explains_missing_setup(paths: StatePaths, monkeypatch) -> None:
     with pytest.raises(NazarethError, match="install.sh.*--extras search,graph") as exc:
         Memory(paths, graph=no_extra).enrich()
     assert "pip install" not in str(exc.value)
+
+
+def test_enrich_stops_at_a_slow_event_and_keeps_progress(mem: Memory, store: dict) -> None:
+    ids = _seed(mem)
+    slow = mem.ledger.entries()[-1].id  # the artifact event
+    store["slow_on"] = slow
+    with pytest.raises(NazarethError, match=f"Stopped at event {ids['event']}.*600s.*REASONING"):
+        mem.enrich()
+    assert len(store["episodes"]) == 3 and store["closed"] == 1
+    del store["slow_on"]
+    assert mem.enrich()["sent"] == 1  # resumes with the slow event
+
+
+def test_ctrl_c_stops_enrich_quietly(paths: StatePaths, store: dict, monkeypatch,
+                                    capsys) -> None:
+    monkeypatch.setattr(Memory, "_default_graph",
+                        lambda self, write: FakeGraph(store, paths.graph, write))
+    mem = Memory(paths)
+    ids = _seed(mem)
+    store["interrupt_on"] = mem.ledger.entries()[-1].id
+    with pytest.raises(SystemExit) as exc:
+        main(["--dir", str(paths.project), "enrich"])
+    assert exc.value.code == 130
+    err = capsys.readouterr().err
+    assert "Interrupted" in err and "Traceback" not in err
+    assert store["closed"] == 1 and len(store["episodes"]) == 3
+    assert ids["event"] not in [ep.target[0] for ep in store["episodes"]]
+
+
+def test_enrich_timeout_setting(monkeypatch) -> None:
+    monkeypatch.delenv(graphs.TIMEOUT_ENV, raising=False)
+    assert graphs.enrich_timeout() == graphs.DEFAULT_TIMEOUT
+    monkeypatch.setenv(graphs.TIMEOUT_ENV, "90")
+    assert graphs.enrich_timeout() == 90
+    for bad in ("soon", "0", "-5"):
+        monkeypatch.setenv(graphs.TIMEOUT_ENV, bad)
+        with pytest.raises(graphs.GraphUnavailable, match="number of seconds"):
+            graphs.enrich_timeout()
+
+
+def test_reasoning_effort_is_sent_with_every_request(monkeypatch) -> None:
+    import asyncio
+
+    sent = []
+
+    async def create(**kwargs):
+        sent.append(kwargs)
+        return "response"
+
+    wrapped = graphs.with_reasoning_effort(create, "low")
+    assert asyncio.run(wrapped(model="m", max_tokens=5)) == "response"
+    assert sent == [{"model": "m", "max_tokens": 5, "reasoning_effort": "low"}]
+
+    for key, value in (("NAZARETH_LLM_BASE_URL", "http://x/v1"), ("NAZARETH_LLM_API_KEY", "k"),
+                       ("NAZARETH_LLM_MODEL", "glm")):
+        monkeypatch.setenv(key, value)
+    monkeypatch.delenv(graphs.REASONING_ENV, raising=False)
+    assert graphs.REASONING_ENV not in graphs.llm_settings()
+    monkeypatch.setenv(graphs.REASONING_ENV, " low ")
+    assert graphs.llm_settings()[graphs.REASONING_ENV] == "low"
 
 
 def test_llm_settings_name_whats_missing(monkeypatch) -> None:

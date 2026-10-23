@@ -7,8 +7,20 @@ same change as the code.
 
 ## [Unreleased]
 
+### Added
+
+- `NAZARETH_LLM_REASONING_EFFORT` sends `reasoning_effort` with every `enrich` request.
+  With GLM 5.3, `low` cut reasoning from about 470 tokens to 6 per prompt: events took
+  10–16 s with facts instead of about 50 s, and the empty responses stopped.
+- `NAZARETH_ENRICH_TIMEOUT` (default 600 s) caps the time one event may take, including
+  Graphiti's retries. `enrich` then stops with a message instead of retrying for many
+  minutes, and the events before it stay saved.
+
 ### Fixed
 
+- Ctrl-C during `enrich` stops quietly: the in-flight LLM calls are cancelled, the graph is
+  closed, and it says the events already sent are saved, instead of printing a traceback.
+  Other commands exit with a one-line "interrupted" (status 130).
 - `enrich` no longer tells you to install the graph extra when only the LLM settings are
   missing, and the install hints for both extras now give commands that work: the
   installer with `--extras`, or `uv tool install -e … --force` from a checkout, instead of

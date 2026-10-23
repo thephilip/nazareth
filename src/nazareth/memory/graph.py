@@ -32,6 +32,16 @@ GROUP = "nazareth"
 WATERMARK_KEY = "nazareth:watermark"
 LLM_ENV = ("NAZARETH_LLM_BASE_URL", "NAZARETH_LLM_API_KEY", "NAZARETH_LLM_MODEL")
 SMALL_MODEL_ENV = "NAZARETH_LLM_SMALL_MODEL"
+# Sent as the standard `reasoning_effort` request field. Reasoning models (GLM,
+# DeepSeek, o-series) otherwise think at length on every extraction prompt, which
+# is slow and can leave the answer empty.
+REASONING_ENV = "NAZARETH_LLM_REASONING_EFFORT"
+TIMEOUT_ENV = "NAZARETH_ENRICH_TIMEOUT"
+DEFAULT_TIMEOUT = 600  # seconds per event, including Graphiti's own retries
+
+
+class EnrichTimeout(Exception):
+    """One event took longer than the enrich timeout."""
 
 
 class GraphUnavailable(Exception):
@@ -139,7 +149,31 @@ def llm_settings() -> dict[str, str]:
             f"set {', '.join(missing)} to an OpenAI-compatible endpoint, key and model")
     out = {k: os.environ[k] for k in LLM_ENV}
     out[SMALL_MODEL_ENV] = os.environ.get(SMALL_MODEL_ENV) or out["NAZARETH_LLM_MODEL"]
+    if effort := os.environ.get(REASONING_ENV, "").strip():
+        out[REASONING_ENV] = effort
     return out
+
+
+def enrich_timeout() -> float:
+    raw = os.environ.get(TIMEOUT_ENV, "").strip()
+    try:
+        seconds = float(raw) if raw else DEFAULT_TIMEOUT
+    except ValueError:
+        seconds = 0
+    if seconds <= 0:
+        raise GraphUnavailable(f"{TIMEOUT_ENV} should be a number of seconds, not {raw!r}")
+    return seconds
+
+
+def with_reasoning_effort(create: Callable[..., Any], effort: str) -> Callable[..., Any]:
+    """Wrap an async `chat.completions.create` so every request sets `reasoning_effort`.
+    Graphiti's client doesn't pass extra request fields through."""
+
+    async def create_with_effort(*args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("reasoning_effort", effort)
+        return await create(*args, **kwargs)
+
+    return create_with_effort
 
 
 class GraphitiGraph:
@@ -162,6 +196,7 @@ class GraphitiGraph:
         warnings.filterwarnings("ignore", r"coroutine '.*shutdown' was never awaited",
                                 RuntimeWarning)
         self.path = path
+        self._timeout = enrich_timeout() if llm else None
         self._client_name = f"nazareth-{os.getpid()}"
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(target=self._loop.run_forever, daemon=True,
@@ -177,7 +212,12 @@ class GraphitiGraph:
             raise
 
     def _run(self, coro: Coroutine[Any, Any, Any]) -> Any:
-        return asyncio.run_coroutine_threadsafe(coro, self._loop).result()
+        future = asyncio.run_coroutine_threadsafe(coro, self._loop)
+        try:
+            return future.result()
+        except KeyboardInterrupt:
+            future.cancel()  # stop the LLM calls before close() uses the loop
+            raise
 
     async def _open(self, embedder: Any, llm: dict[str, str] | None):
         from graphiti_core import Graphiti
@@ -186,6 +226,7 @@ class GraphitiGraph:
         from graphiti_core.embedder.client import EmbedderClient
         from graphiti_core.llm_client.config import LLMConfig
         from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
+        from openai import AsyncOpenAI
         from redislite.async_falkordb_client import AsyncFalkorDB
 
         class LocalEmbedder(EmbedderClient):
@@ -211,10 +252,14 @@ class GraphitiGraph:
                             base_url=llm["NAZARETH_LLM_BASE_URL"])
                   if llm else LLMConfig(api_key="unused", model="unused",
                                         base_url="http://127.0.0.1:9/v1"))
+        client = AsyncOpenAI(api_key=config.api_key, base_url=config.base_url)
+        if llm and (effort := llm.get(REASONING_ENV)):
+            completions = client.chat.completions
+            completions.create = with_reasoning_effort(completions.create, effort)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         db = AsyncFalkorDB(dbfilename=str(self.path), client_name=self._client_name)
         graphiti = Graphiti(graph_driver=FalkorDriver(falkor_db=db, database=GROUP),
-                            llm_client=OpenAIGenericClient(config=config),
+                            llm_client=OpenAIGenericClient(config=config, client=client),
                             embedder=LocalEmbedder(), cross_encoder=KeepOrder())
         await graphiti.build_indices_and_constraints()
         return graphiti, db
@@ -229,10 +274,14 @@ class GraphitiGraph:
     def add(self, ep: Episode) -> int:
         from graphiti_core.nodes import EpisodeType
 
-        result = self._run(self._graphiti.add_episode(
+        episode = self._graphiti.add_episode(
             name=ep.name, episode_body=ep.body, source=EpisodeType.text,
             source_description="nazareth ledger event", group_id=GROUP,
-            reference_time=datetime.fromtimestamp(ep.ts, UTC)))
+            reference_time=datetime.fromtimestamp(ep.ts, UTC))
+        try:
+            result = self._run(asyncio.wait_for(episode, self._timeout))
+        except TimeoutError as e:
+            raise EnrichTimeout(f"no answer within {self._timeout:g}s") from e
         return len(result.edges)
 
     def set_watermark(self, seq: int, entry_hash: str) -> None:
