@@ -132,7 +132,9 @@ def test_enrich_limit_resumes_where_it_stopped(mem: Memory, store: dict) -> None
 def test_enrich_names_events_that_produced_no_facts(mem: Memory, store: dict) -> None:
     ids = _seed(mem)
     q_event = mem.ledger.entries()[1].id
-    store["empty"] = {q_event}
+    artifact = mem.ledger.entries()[-1].id
+    store["empty"] = {q_event, artifact}
+    # A routine event with nothing to extract isn't a failure; a question is.
     assert mem.enrich()["no_facts"] == [ids["question"]]
 
 
@@ -297,6 +299,20 @@ def test_enrich_cli(paths: StatePaths, store: dict, monkeypatch, capsys) -> None
     main(["--dir", str(paths.project), "enrich"])
     out = capsys.readouterr().out
     assert "Sent 2 ledger events" in out and "left" not in out
+
+
+def test_enrich_quiets_graphiti_warnings_unless_verbose(paths: StatePaths, store: dict,
+                                                        monkeypatch, capsys) -> None:
+    import logging
+
+    monkeypatch.setattr(Memory, "_default_graph",
+                        lambda self, write: FakeGraph(store, paths.graph, write))
+    logger = logging.getLogger("graphiti_core")
+    monkeypatch.setattr(logger, "level", logging.NOTSET)
+    main(["--dir", str(paths.project), "enrich", "--verbose"])
+    assert logger.level == logging.NOTSET
+    main(["--dir", str(paths.project), "enrich"])
+    assert logger.level == logging.ERROR
 
 
 def test_cli_closes_the_graph(paths: StatePaths, store: dict, monkeypatch, capsys) -> None:

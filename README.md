@@ -215,7 +215,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `verify` | Check the hash chain |
 | `rebuild` | Regenerate the index from the ledger and reset vectors |
 | `embed` | Compute semantic search vectors now (needs the `search` extra) |
-| `enrich [--limit N]` | Send new ledger events to the knowledge graph, one line per event with its time and facts found (needs the `graph` extra; calls your LLM) |
+| `enrich [--limit N] [--verbose]` | Send new ledger events to the knowledge graph, one line per event with its time and facts found (needs the `graph` extra; calls your LLM). It warns when a decision, constraint or question yields no facts; `--verbose` also shows Graphiti's warnings about LLM slips it corrects itself |
 | `serve` | Run the MCP server (stdio) |
 | `context` | Memory snapshot for agent session start (used by the hook) |
 | `record-commit` | Log the latest commit (used by the git `post-commit` hook) |

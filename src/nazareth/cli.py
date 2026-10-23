@@ -179,13 +179,19 @@ def cmd_embed(args: argparse.Namespace) -> None:
 
 
 def cmd_enrich(args: argparse.Namespace) -> None:
-    from nazareth.memory.service import EnrichStep
+    import logging
+
+    from nazareth.memory.service import SUBSTANTIVE, EnrichStep
 
     t = Term()
+    if not args.verbose:
+        # Graphiti warns about LLM slips it corrects itself (e.g. invalid
+        # duplicate_facts indexes); keep its errors, drop the rest.
+        logging.getLogger("graphiti_core").setLevel(logging.ERROR)
 
     def progress(step: EnrichStep) -> None:
-        facts = (t.warn("no facts") if not step.facts
-                 else f"{step.facts} fact{'s' if step.facts != 1 else ''}")
+        none = t.warn("no facts") if step.kind in SUBSTANTIVE else t.meta("no facts")
+        facts = none if not step.facts else f"{step.facts} fact{'s' if step.facts != 1 else ''}"
         n = f"{step.n}/{step.target}".rjust(2 * len(str(step.target)) + 1)
         print(f"  {n}  {step.kind:<10} {t.id(step.id.ljust(20))} "
               f"{t.meta(f'{step.seconds:4.0f}s')}  {facts}", flush=True)
@@ -202,9 +208,9 @@ def cmd_enrich(args: argparse.Namespace) -> None:
     print(f"Sent {out['sent']} ledger events to the knowledge graph{more}.")
     if out["no_facts"]:
         ids = ", ".join(out["no_facts"])
-        print(t.warn(f"No facts came back for {ids}. The model may have failed to extract "
-                     "them; they won't be retried unless you `nazareth rebuild` and enrich "
-                     "again, so consider a stronger model."))
+        print(t.warn(f"No facts came back for {ids}. Records like these always have something "
+                     "to extract, so the model probably failed on them; they won't be retried "
+                     "unless you `nazareth rebuild` and enrich again."))
 
 
 def cmd_status(args: argparse.Namespace) -> None:
@@ -429,9 +435,11 @@ def build_parser() -> argparse.ArgumentParser:
     add("verify", cmd_verify, "check the ledger hash chain")
     add("rebuild", cmd_rebuild, "rebuild the index from the ledger and reset vectors")
     add("embed", cmd_embed, "compute semantic search vectors now (needs the search extra)")
-    add("enrich", cmd_enrich,
-        "send new ledger events to the knowledge graph (graph extra; calls your LLM)"
-        ).add_argument("--limit", type=int, help="send at most this many events")
+    p = add("enrich", cmd_enrich,
+            "send new ledger events to the knowledge graph (graph extra; calls your LLM)")
+    p.add_argument("--limit", type=int, help="send at most this many events")
+    p.add_argument("--verbose", action="store_true",
+                   help="also show Graphiti's warnings about LLM slips it corrects itself")
 
     p = add("decide", cmd_decide, "record a decision as the human")
     p.add_argument("topic")

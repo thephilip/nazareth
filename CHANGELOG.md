@@ -7,6 +7,14 @@ same change as the code.
 
 ## [Unreleased]
 
+### Changed
+
+- `enrich` warns about missing facts only for decisions, constraints and questions, which
+  always have something to extract. Routine events and commits often don't, so their
+  "no facts" is shown plainly on the progress line, without the warning.
+- `enrich` hides Graphiti's warnings about LLM slips it corrects itself (such as invalid
+  `duplicate_facts` indexes); its errors still show, and `--verbose` shows everything.
+
 ## [0.2.1] - 2026-10-23
 
 ### Added

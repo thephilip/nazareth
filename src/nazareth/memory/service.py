@@ -115,6 +115,9 @@ def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
     return out
 
 
+# Kinds whose episodes always carry something to extract. Routine events (commits,
+# status notes) often don't, so no facts from them is normal, not a model failure.
+SUBSTANTIVE = frozenset({"decision", "constraint", "question"})
 INSTALLER = "https://raw.githubusercontent.com/thephilip/nazareth/main/install.sh"
 
 
@@ -257,7 +260,7 @@ class Memory:
                                 f"before it are saved, so rerun `nazareth enrich` to resume, "
                                 f"or raise {graphs.TIMEOUT_ENV}.") from e
                         sent += 1
-                        if not facts:
+                        if not facts and ep.target[1] in SUBSTANTIVE:
                             empty.append(ep.target[0])
                         if progress is not None:
                             progress(EnrichStep(sent, target, ep.target[1], ep.target[0],
