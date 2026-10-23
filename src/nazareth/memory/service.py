@@ -115,6 +115,16 @@ def _event_out(e: LedgerEntry | sqlite3.Row) -> dict[str, Any]:
     return out
 
 
+INSTALLER = "https://raw.githubusercontent.com/thephilip/nazareth/main/install.sh"
+
+
+def install_hint(extras: str) -> str:
+    """How to add extras to the CLI's own environment. nazareth isn't on PyPI, and
+    a bare `pip install` would land in some other Python, so name both real routes."""
+    return (f"Reinstall with the extra: `curl -LsSf {INSTALLER} | sh -s -- --extras {extras}`, "
+            f"or from a checkout `uv tool install -e '.[{extras}]' --force`.")
+
+
 @dataclass(frozen=True)
 class EnrichStep:
     """One event sent by `Memory.enrich`, for progress reporting."""
@@ -215,11 +225,9 @@ class Memory:
             try:
                 g = self._open_graph(True)
             except graphs.GraphUnavailable as e:
-                raise NazarethError(
-                    f"Knowledge graph unavailable: {e}. Install the extra with "
-                    "pip install 'nazareth[graph]' (or reinstall it) and see the README for the "
-                    "LLM settings."
-                ) from e
+                hint = (install_hint("search,graph") if e.missing_extra else
+                        "See the README's knowledge graph section for the LLM settings.")
+                raise NazarethError(f"Knowledge graph unavailable: {e}. {hint}") from e
             try:
                 mark = g.watermark()
                 if mark is not None:
@@ -259,9 +267,7 @@ class Memory:
     def embed(self) -> dict[str, Any]:
         """Bring the vector store up to date (`nazareth embed`)."""
         if self.embedder is None:
-            raise NazarethError(
-                "Semantic search isn't installed. Install the extra: pip install 'nazareth[search]'."
-            )
+            raise NazarethError("Semantic search isn't installed. " + install_hint("search"))
         self.index.sync()
         docs = self.index.documents()
         try:

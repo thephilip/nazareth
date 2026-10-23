@@ -35,7 +35,12 @@ SMALL_MODEL_ENV = "NAZARETH_LLM_SMALL_MODEL"
 
 
 class GraphUnavailable(Exception):
-    """The graph can't be used here (missing extra or configuration)."""
+    """The graph can't be used here: `missing_extra` when installing the extra
+    would fix it, otherwise a configuration problem (the LLM settings)."""
+
+    def __init__(self, message: str, missing_extra: bool = False) -> None:
+        super().__init__(message)
+        self.missing_extra = missing_extra
 
 
 @dataclass(frozen=True)
@@ -147,9 +152,10 @@ class GraphitiGraph:
 
     def __init__(self, path: Path, embedder: Any, llm: dict[str, str] | None = None) -> None:
         if not graph_extra_installed():
-            raise GraphUnavailable("graph extra not installed")
+            raise GraphUnavailable("graph extra not installed", missing_extra=True)
         if embedder is None:
-            raise GraphUnavailable("the graph needs the search extra's embedder")
+            raise GraphUnavailable("the graph needs the search extra's embedder",
+                                   missing_extra=True)
         os.environ["GRAPHITI_TELEMETRY_ENABLED"] = "false"
         # redislite's exit cleanup calls its async shutdown without awaiting it;
         # close() already stops the server, so the warning is only noise.
@@ -165,7 +171,7 @@ class GraphitiGraph:
             self._graphiti, self._db = self._run(self._open(embedder, llm))
         except ImportError as e:
             self._stop()
-            raise GraphUnavailable(f"graph extra is incomplete ({e})") from e
+            raise GraphUnavailable(f"graph extra is incomplete ({e})", missing_extra=True) from e
         except BaseException:
             self._stop()
             raise

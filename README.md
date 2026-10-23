@@ -76,7 +76,8 @@ which line to add yourself.
 ### Semantic search (optional)
 
 ```bash
-uv tool install -e '.[search]'   # or: pip install 'nazareth[search]'
+curl -LsSf https://raw.githubusercontent.com/thephilip/nazareth/main/install.sh | sh -s -- --extras search
+# from a checkout: uv tool install -e '.[search]' --force
 nazareth embed                   # optional: compute vectors now instead of on first query
 ```
 
@@ -95,7 +96,8 @@ happens; agents just get keyword results.
 ### Knowledge graph (optional)
 
 ```bash
-uv tool install -e '.[graph]'    # or: pip install 'nazareth[graph]'  (includes search)
+curl -LsSf https://raw.githubusercontent.com/thephilip/nazareth/main/install.sh | sh -s -- --extras search,graph
+# from a checkout: uv tool install -e '.[graph]' --force   (graph includes search)
 export NAZARETH_LLM_BASE_URL=https://your-endpoint/v1   # any OpenAI-compatible API
 export NAZARETH_LLM_MODEL=your-model
 export NAZARETH_LLM_API_KEY=...                         # e.g. $(security find-generic-password -s <name> -w)

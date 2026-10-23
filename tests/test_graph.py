@@ -154,8 +154,16 @@ def test_enrich_explains_missing_setup(paths: StatePaths, monkeypatch) -> None:
     def no_llm(write: bool):
         raise graphs.GraphUnavailable("set NAZARETH_LLM_MODEL to ...")
 
-    with pytest.raises(NazarethError, match="NAZARETH_LLM_MODEL.*nazareth\\[graph\\]"):
+    def no_extra(write: bool):
+        raise graphs.GraphUnavailable("graph extra not installed", missing_extra=True)
+
+    # Missing LLM settings aren't fixed by reinstalling, so don't suggest it.
+    with pytest.raises(NazarethError, match="NAZARETH_LLM_MODEL.*LLM settings") as exc:
         Memory(paths, graph=no_llm).enrich()
+    assert "install" not in str(exc.value)
+    with pytest.raises(NazarethError, match="install.sh.*--extras search,graph") as exc:
+        Memory(paths, graph=no_extra).enrich()
+    assert "pip install" not in str(exc.value)
 
 
 def test_llm_settings_name_whats_missing(monkeypatch) -> None:
@@ -292,8 +300,9 @@ def test_incomplete_extra_is_unavailable_not_a_crash(tmp_path: Path, monkeypatch
         raise ModuleNotFoundError("No module named 'httpx'")
 
     monkeypatch.setattr(graphs.GraphitiGraph, "_open", broken)
-    with pytest.raises(graphs.GraphUnavailable, match="incomplete.*httpx"):
+    with pytest.raises(graphs.GraphUnavailable, match="incomplete.*httpx") as exc:
         graphs.GraphitiGraph(tmp_path / "graph.db", FakeEmbedder())
+    assert exc.value.missing_extra
 
 
 @needs_graph

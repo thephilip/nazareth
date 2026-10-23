@@ -134,7 +134,7 @@ def test_no_extra_means_keyword_search(paths: StatePaths) -> None:
     ids = _seed(mem)
     assert [r["id"] for r in mem.search("sqlite")["records"]] == [ids["storage"]]
     assert mem.vector_error is None and not paths.vectors.exists()
-    with pytest.raises(NazarethError, match=r"nazareth\[search\]"):
+    with pytest.raises(NazarethError, match=r"--extras search`"):
         mem.embed()
     mem.close()
 
@@ -188,7 +188,7 @@ def test_embed_cli(tmp_path: Path, capsys, monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(SystemExit):
         main(["--dir", str(tmp_path), "embed"])
-    assert "nazareth[search]" in capsys.readouterr().err
+    assert "--extras search`" in capsys.readouterr().err
 
     monkeypatch.setattr(vectors, "default_embedder", lambda: FakeEmbedder())
     main(["--dir", str(tmp_path), "embed"])

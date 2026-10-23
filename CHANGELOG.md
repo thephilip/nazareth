@@ -7,6 +7,13 @@ same change as the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- `enrich` no longer tells you to install the graph extra when only the LLM settings are
+  missing, and the install hints for both extras now give commands that work: the
+  installer with `--extras`, or `uv tool install -e … --force` from a checkout, instead of
+  `pip install 'nazareth[…]'` (nazareth isn't on PyPI, and pip would install elsewhere).
+
 ## [0.2.0] - 2026-10-22
 
 ### Added
