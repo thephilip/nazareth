@@ -7,6 +7,12 @@ same change as the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- Closing the knowledge graph waits for its embedded database server to exit. Reopening
+  the graph straight after closing it (two CLI commands in a row, or tests) could
+  otherwise reuse the dying server and fail with `FileNotFoundError` on its socket.
+
 ## [0.3.0] - 2026-10-23
 
 ### Added

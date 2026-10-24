@@ -357,6 +357,17 @@ needs_graph = pytest.mark.skipif(not graphs.graph_extra_installed(), reason="gra
 
 
 @needs_graph
+@needs_graph
+def test_close_waits_for_the_server_to_exit(tmp_path: Path) -> None:
+    """Reopening right after close must start a fresh server, not reuse a dying one."""
+    import psutil
+
+    g = graphs.GraphitiGraph(tmp_path / "graph.db", FakeEmbedder())
+    server = g._db.client.pid
+    g.close()
+    assert not psutil.pid_exists(server) or psutil.Process(server).status() == "zombie"
+
+
 def test_graphiti_store_persists_watermark_and_searches_offline(tmp_path: Path) -> None:
     """Opens embedded FalkorDB with no LLM reachable: building indices,
     searching and the watermark must not need one, and must survive reopening."""

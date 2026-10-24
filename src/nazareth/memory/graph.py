@@ -137,6 +137,13 @@ class Graph(Protocol):
     def close(self) -> None: ...
 
 
+def _wait_for_exit(pid: int, timeout: float = 10) -> None:
+    import psutil  # a redislite dependency, so present with the graph extra
+
+    with contextlib.suppress(psutil.NoSuchProcess, psutil.TimeoutExpired):
+        psutil.Process(pid).wait(timeout)
+
+
 def graph_extra_installed() -> bool:
     return all(importlib.util.find_spec(m) is not None for m in ("graphiti_core", "redislite"))
 
@@ -329,7 +336,9 @@ class GraphitiGraph:
         # FalkorDB Lite's cleanup never awaits its async shutdown, which would
         # leave the server running, and an awaited SHUTDOWN stalls for seconds.
         # So the last process to close stops the server with SIGTERM (redis
-        # saves and exits); other processes still using it keep it alive.
+        # saves and exits); other processes still using it keep it alive. Wait
+        # for the exit: a dying server still looks alive to redislite, so an
+        # immediate reopen would reuse it and find its socket already gone.
         try:
             server = self._db.client.pid if self._run(last()) else None
         except Exception:  # noqa: BLE001 - already gone: nothing to stop
@@ -341,3 +350,4 @@ class GraphitiGraph:
             if server:
                 with contextlib.suppress(ProcessLookupError):
                     os.kill(server, signal.SIGTERM)
+                _wait_for_exit(server)
