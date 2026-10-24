@@ -7,6 +7,8 @@ same change as the code.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-24
+
 ### Added
 
 - `nazareth init --skills` writes the plan, review and wrapup workflows as portable
@@ -198,7 +200,8 @@ The first release.
   The rules match command text, so a deliberate bypass is still possible; see Known
   limitations in the README.
 
-[Unreleased]: https://github.com/thephilip/nazareth/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/thephilip/nazareth/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/thephilip/nazareth/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/thephilip/nazareth/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/thephilip/nazareth/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/thephilip/nazareth/compare/v0.1.0...v0.2.0
