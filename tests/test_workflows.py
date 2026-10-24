@@ -52,6 +52,28 @@ def test_skill_files_are_valid(name: str) -> None:
     assert "$ARGUMENTS" in body
 
 
+@pytest.mark.parametrize("name", sorted(workflows.WORKFLOWS))
+def test_portable_skills_use_only_agent_skills_fields(name: str) -> None:
+    _, front, body = workflows.skill_file(name, portable=True).split("---\n", 2)
+    assert yaml.safe_load(front) == {"name": f"nazareth-{name}",
+                                     "description": workflows.WORKFLOWS[name].description}
+    assert "$" not in body and workflows.WORKFLOWS[name].default_focus in body
+
+
+def test_init_skills_writes_agents_skills_only(tmp_path: Path, capsys) -> None:
+    main(["--dir", str(tmp_path), "init", "--skills"])
+    out = capsys.readouterr().out
+    for name in workflows.WORKFLOWS:
+        rel = f".agents/skills/nazareth-{name}/SKILL.md"
+        assert (tmp_path / rel).exists() and f"{rel}: created" in out
+    assert not (tmp_path / ".claude").exists() and not (tmp_path / ".mcp.json").exists()
+    skill = tmp_path / ".agents/skills/nazareth-plan/SKILL.md"
+    skill.write_text("mine")
+    assert ".agents/skills/nazareth-plan/SKILL.md: exists, left as is" in "\n".join(
+        f"{p}: {w}" for p, w in workflows.install_skills(tmp_path))
+    assert skill.read_text() == "mine"
+
+
 def test_prompt_cli(paths: StatePaths, capsys) -> None:
     main(["--dir", str(paths.project), "prompt", "review", "src/app.ts", "src/lib.ts"])
     assert "Focus: src/app.ts src/lib.ts" in capsys.readouterr().out

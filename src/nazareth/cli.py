@@ -17,7 +17,7 @@ from nazareth.ledger.chain import Ledger
 from nazareth.memory.service import HUMAN, Memory, NazarethError
 from nazareth.paths import StatePaths, find_project_dir
 from nazareth.term import Term
-from nazareth.workflows import WORKFLOWS
+from nazareth.workflows import WORKFLOWS, install_skills
 from nazareth.workflows import render as render_workflow
 
 
@@ -107,6 +107,8 @@ def cmd_init(args: argparse.Namespace) -> None:
     existed = paths.initialized
     paths.init()
     report += git_hook.install(paths.project)
+    if args.skills:
+        report += install_skills(paths.project)
     Memory(paths).close()
     print(f"{'Already initialized' if existed else 'Initialized'}: {paths.state}")
     for path, what in report:
@@ -447,6 +449,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also add lens subagents, the MCP server and a context hook for Claude Code")
     p.add_argument("--docker", action="store_true",
                    help="also add a Docker Agent team config with a coordinator and the lenses")
+    p.add_argument("--skills", action="store_true",
+                   help="also add the workflows as Agent Skills in .agents/skills/ "
+                        "(Codex, OpenCode, Gemini CLI, pi, ...)")
     p.add_argument("--lenses", metavar="LIST",
                    help="Claude Code lenses to add, e.g. architect,reviewer (default: all)")
     p.add_argument("--model", metavar="PROVIDER/MODEL",

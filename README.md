@@ -169,10 +169,18 @@ Three workflows cover the steps that are easy to forget:
 | `wrapup` | At the end of a session | Records decisions not yet recorded, logs what was built and found, and tells you what waits on you |
 
 Each takes an optional focus, such as spec files. They're written once, without
-host-specific wording, and offered three ways:
+host-specific wording, and offered four ways:
 
 - **Claude Code:** `/nazareth-plan docs/spec/X.md`, `/nazareth-review`, `/nazareth-wrapup`
   (skills from `init --claude`). Claude may also pick them up on its own when they fit.
+- **Codex, OpenCode, Gemini CLI, pi and other hosts that read
+  [Agent Skills](https://agentskills.io):** `nazareth init --skills` writes them to
+  `.agents/skills/nazareth-{plan,review,wrapup}/SKILL.md`, the standard's shared location,
+  using only its common fields (`name`, `description`). Hosts differ in which folders they
+  scan, so check yours or copy them to its own (for example `.opencode/skills/`). The
+  skills call the `nazareth` MCP tools, so add the server to the host's MCP config
+  (`nazareth serve`, with `NAZARETH_ACTOR` set to e.g. `agent:main`); pi has no built-in
+  MCP and needs an adapter extension.
 - **Any MCP host that lists prompts:** the `nazareth` server offers them as the prompts
   `plan`, `review` and `wrapup` (Claude Code also shows these, as `/mcp__nazareth__plan`).
 - **Any other agent:** `nazareth prompt review` prints the text to paste, or to pass on,
@@ -237,7 +245,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 
 | Command | Purpose |
 |---|---|
-| `init [--claude [--lenses L]] [--docker [--model M]]` | Create `.nazareth/`; add the Claude Code and/or Docker Agent integration (`--lenses architect,reviewer` picks the Claude Code lenses) |
+| `init [--claude [--lenses L]] [--docker [--model M]] [--skills]` | Create `.nazareth/`; add the Claude Code and/or Docker Agent integration (`--lenses architect,reviewer` picks the Claude Code lenses); `--skills` adds the workflows as portable Agent Skills in `.agents/skills/` |
 | `prompt plan\|review\|wrapup [focus…]` | Print a [workflow](#workflows) prompt for any agent |
 | `status` | What needs you, constraints, decisions, recent activity |
 | `answer <q-id> "..."` | Answer a lens's question |

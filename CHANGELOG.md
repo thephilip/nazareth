@@ -7,6 +7,14 @@ same change as the code.
 
 ## [Unreleased]
 
+### Added
+
+- `nazareth init --skills` writes the plan, review and wrapup workflows as portable
+  [Agent Skills](https://agentskills.io) in `.agents/skills/nazareth-*/SKILL.md`, for
+  Codex, OpenCode, Gemini CLI, pi and other hosts that read the standard. They use only
+  its common fields and take the focus from the request instead of Claude Code's
+  `$ARGUMENTS`. Existing files are left alone.
+
 ### Fixed
 
 - Closing the knowledge graph waits for its embedded database server to exit. Reopening
