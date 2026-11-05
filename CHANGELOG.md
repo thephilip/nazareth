@@ -7,6 +7,27 @@ same change as the code.
 
 ## [Unreleased]
 
+### Added
+
+- `decide` takes `amends`: a decision that changes a detail of active decisions, which
+  stay in effect beside it, so the amendment states only the change instead of restating
+  the whole decision to supersede it. A lens amending a human decision is held as
+  pending, as with `supersedes`. The human CLI has `decide --amends`.
+- `decide` takes `answers`: open questions the decision settles close with it as their
+  answer, when it takes effect. An answer the human gives in the agent session can be
+  recorded this way.
+- `status` flags questions open for a week or more.
+
+### Changed
+
+- The phase belongs to the main agent. The stale-phase step in `next_steps` is marked
+  `for: agent`, fires after 20 commits instead of 5, and no longer shows in `status`; the
+  session-start snapshot lists it under "Next steps for you". Every step now carries `for`
+  (`agent` or `human`).
+- Tool descriptions and the plan workflow ask for short decisions, treat a phase as a
+  stage of work rather than a release version or backlog, and suggest six `log` actions:
+  artifact, finding, fix, test, release, idea.
+
 ### Fixed
 
 - Commits made in a linked git worktree are logged. The shared `post-commit` hook ran

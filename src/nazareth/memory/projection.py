@@ -155,11 +155,12 @@ class Projection:
                 (r["id"], e.action, r.get("topic"), r["text"], r.get("rationale"), e.actor,
                  r["status"], r.get("status_reason"), e.seq, e.ts, e.ts),
             )
-            for link_type in ("supersedes", "depends_on"):
+            for link_type in ("supersedes", "depends_on", "amends", "answers"):
                 for dst in r.get(link_type, []):
                     self._link(r["id"], dst, link_type)
             if r["status"] == "active":
                 self._supersede(r.get("supersedes", []), by=r["id"], ts=e.ts)
+                self._settle(r.get("answers", []), r["id"], r["text"], e.actor, e.ts)
             body = " ".join(filter(None, [r.get("topic"), r["text"], r.get("rationale")]))
             self._index(r["id"], e.action, body)
         elif e.action == "resolution":
@@ -168,6 +169,10 @@ class Projection:
                 for dst in p.get("supersedes", []):
                     self._link(p["id"], dst, "supersedes")
                 self._supersede(p.get("supersedes", []), by=p["id"], ts=e.ts)
+                rec = self.record(p["id"])
+                answers = [r["dst"] for r in self.links(src=p["id"], link_type="answers")]
+                if rec is not None and answers:
+                    self._settle(answers, p["id"], rec["text"], rec["actor"], e.ts)
             else:
                 self._set_status(p["id"], "rejected", p.get("note"), e.ts)
         elif e.action == "retirement":
@@ -207,6 +212,15 @@ class Projection:
                 "UPDATE records SET status = 'superseded', superseded_by = ?, updated_ts = ?"
                 " WHERE id = ?",
                 (by, ts, rid),
+            )
+
+    def _settle(self, qids: list[str], rid: str, text: str, actor: str, ts: float) -> None:
+        """Close open questions a decision answers, with the decision as the answer."""
+        for qid in qids:
+            self.db.execute(
+                "UPDATE questions SET status = 'answered', answer = ?, answered_by = ?,"
+                " answered_ts = ? WHERE id = ? AND status = 'open'",
+                (f"{rid}: {text}", actor, ts, qid),
             )
 
     def _set_status(self, rid: str, status: str, reason: str | None, ts: float) -> None:

@@ -27,11 +27,14 @@ and an append-only log, shared by every agent and the human.
   and anything waiting on the human.
 - Constraints are non-negotiable. Active decisions are binding until superseded.
 - Record each choice with `decide` as soon as it's settled, not at the end of
-  the task. To change one, pass its id in `supersedes`; a
-  conflicting decision that doesn't is held as pending for the human.
-- When you need the human, `ask` instead of guessing or blocking.
+  the task. To change one, pass its id in `supersedes` (replace it) or `amends`
+  (change a detail); a conflicting decision that does neither is held as
+  pending for the human.
+- When you need the human, `ask` instead of guessing or blocking. If they
+  answer in the chat, record the outcome with `decide(..., answers=[q-id])`.
 - `log` what you produce (artifacts, findings, tests) so others can find it.
-- If `brief` returns `next_steps`, pass them on to the human early and briefly.
+- If `brief` returns `next_steps`, do the ones `for` the agent yourself and pass
+  the others on to the human early and briefly.
   The prompts `plan`, `review` and `wrapup` hold the workflows they name.
 """
 
@@ -113,17 +116,24 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
     @server.tool(annotations=WRITE)
     def decide(topic: str, decision: str, rationale: str,
                supersedes: list[str] | None = None, depends_on: list[str] | None = None,
+               amends: list[str] | None = None, answers: list[str] | None = None,
                actor: str | None = None) -> dict:
-        """Record a decision and why. `topic` is a short area like 'auth' or
-        'storage'. To change an earlier decision, list its id in `supersedes`;
-        without that, a decision on a topic that already has one is held as
-        pending for the human. Superseding something already replaced fails
-        and names the current one. `depends_on` lists ids this builds on.
-        Returns the new id, its status, and related active records to check
-        for overlap. `actor` names you (e.g. 'lens:architect') and is used only
-        when the server has no fixed identity."""
+        """Record a decision and why, in a few sentences: the details stay in
+        the spec or code it names. `topic` is a short area like 'auth' or
+        'storage'. To replace an earlier decision, list its id in `supersedes`
+        and state the whole decision. To change one detail, list it in
+        `amends` instead and state only the change; both stay in effect.
+        Without either, a decision on a topic that already has one is held as
+        pending for the human. Naming something already replaced fails and
+        names the current one. `depends_on` lists ids this builds on.
+        `answers` lists open question ids this settles (e.g. the human answered
+        in the chat); they close with this decision as the answer. Returns the
+        new id, its status, and related active records to check for overlap.
+        `actor` names you (e.g. 'lens:architect') and is used only when the
+        server has no fixed identity."""
         return call(lambda m: m.decide(topic, decision, rationale, _actor(actor),
-                                       supersedes=supersedes, depends_on=depends_on))
+                                       supersedes=supersedes, depends_on=depends_on,
+                                       amends=amends, answers=answers))
 
     @server.tool(annotations=WRITE)
     def constrain(constraint: str, reason: str, topic: str | None = None,
@@ -146,8 +156,9 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
     def log(action: str, summary: str, ref: str | None = None, severity: str | None = None,
             actor: str | None = None) -> dict:
         """Append an event to the project ledger: what you produced or found.
-        `action` is a short verb-noun like 'artifact', 'finding', 'test',
-        'refactor'. `ref` is a file or resource (e.g. 'src/auth.py:23').
+        `action` is one of 'artifact', 'finding', 'fix', 'test', 'release' or
+        'idea' (something for later), or another short verb-noun if none fits.
+        `ref` is a file or resource (e.g. 'src/auth.py:23').
         `severity` (low/medium/high/critical) is for findings."""
         return call(lambda m: m.log(action, summary, _actor(actor), ref=ref, severity=severity))
 
@@ -155,8 +166,10 @@ def build_server(paths: StatePaths | None = None) -> MCPServer:
     def phase(set_current: str | None = None, set_next: str | None = None,
               actor: str | None = None) -> dict:
         """Read the project phase (e.g. brainstorm, scaffold, mvp, harden), or
-        change it by passing set_current and/or set_next. Respect it: don't
-        gold-plate during MVP or cut corners while hardening."""
+        change it by passing set_current and/or set_next. A phase is a stage of
+        work, not a release version or a backlog: log releases as 'release' and
+        ideas as 'idea'. Respect it: don't gold-plate during MVP or cut corners
+        while hardening."""
         if set_current is None and set_next is None:
             return call(lambda m: m.phase())
         return call(lambda m: m.set_phase(_actor(actor), current=set_current,

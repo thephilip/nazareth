@@ -20,6 +20,8 @@ from nazareth.term import Term
 from nazareth.workflows import WORKFLOWS, install_skills
 from nazareth.workflows import render as render_workflow
 
+STALE_QUESTION_DAYS = 7  # `status` flags open questions older than this
+
 
 def _when(iso: str | None) -> str:
     if not iso:
@@ -262,18 +264,20 @@ def cmd_status(args: argparse.Namespace) -> None:
             print(_record_line(t, r) + "   " + t.warn("(pending)"))
             print(t.meta(f"      why pending: {t.clip(r['reason'], t.width - 19)}"))
         for q in open_q:
-            print(f"  {t.id(q['id'])}  {t.clip(q['question'], t.width - 12)}")
+            days = (datetime.now().astimezone() - datetime.fromisoformat(q["ts"])).days
+            age = "  " + t.warn(f"open {days} days") if days >= STALE_QUESTION_DAYS else ""
+            print(f"  {t.id(q['id'])}  {t.clip(q['question'], t.width - 12)}{age}")
             meta = f"asked by {q['asked_by']} {_when(q['ts'])}"
             if q.get("context"):
                 meta += f" · {q['context']}"
             print(t.meta(f"      {t.clip(meta, t.width - 6)}"))
-        print(t.meta('  → nazareth answer <q-id> "..."   ·   '
+        print(t.meta('  → nazareth answer <q-id> "..." (or answer in your agent session)   ·   '
                      "nazareth resolve <id> --accept|--reject"))
     else:
         print(f"NEEDS YOU: {t.ok('nothing')}")
-    if b.get("next_steps"):
+    if steps := [s for s in b.get("next_steps", []) if s["for"] == "human"]:
         print("\n" + t.heading("NEXT STEPS"))
-        for s in b["next_steps"]:
+        for s in steps:
             print(f"  • {t.clip(s['text'], t.width - 4)}")
             print(t.meta(f"    → {s['command']}"))
 
@@ -297,7 +301,8 @@ def cmd_status(args: argparse.Namespace) -> None:
 
 def cmd_decide(args: argparse.Namespace) -> None:
     out = _memory(args).decide(args.topic, args.decision, args.why, actor=HUMAN,
-                               supersedes=args.supersedes, depends_on=args.depends_on)
+                               supersedes=args.supersedes, depends_on=args.depends_on,
+                               amends=args.amends)
     _print_json(out) if args.json else _print_write(Term(), out)
 
 
@@ -488,6 +493,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--why", required=True)
     p.add_argument("--supersedes", nargs="+", metavar="ID")
     p.add_argument("--depends-on", nargs="+", metavar="ID")
+    p.add_argument("--amends", nargs="+", metavar="ID",
+                   help="change a detail of these decisions; they stay in effect")
     p.add_argument("--json", action="store_true", help="print JSON")
 
     p = add("constrain", cmd_constrain, "add a non-negotiable constraint")

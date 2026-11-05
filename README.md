@@ -14,8 +14,10 @@ It is built for agents first. Lenses talk to it over MCP; the human steers from 
 ## Three perspectives
 
 - **Human, near the loop.** `nazareth status` shows what needs you (pending decisions,
-  open questions), what's in effect, and what happened. You answer, resolve, and set
-  direction; you don't review every line.
+  open questions, flagged once they've been open a week), what's in effect, and what
+  happened. You answer, resolve, and set direction; you don't review every line. You can
+  also answer in your agent session: the agent records the outcome as a decision that
+  closes the question.
 - **Lenses.** Stateless agents that call `brief` to orient, `decide`/`constrain` to record
   choices, `ask` instead of guessing, and `log` what they produce.
 - **Ledger.** A hash-chained, append-only JSONL file. It is the single source of truth;
@@ -188,10 +190,12 @@ host-specific wording, and offered four ways:
   e.g. `pi "$(nazareth prompt plan docs/spec/X.md)"`.
 
 You don't have to remember when they're due. `nazareth status` ends with **NEXT STEPS**
-worked out from the ledger: the phase hasn't changed in 5 commits, 3 commits have gone
-by without a review, or 20 events aren't in the knowledge graph yet. `brief` returns the
-same list as `next_steps`, and the server's instructions and the session-start snapshot
-tell agents to pass it on to you.
+worked out from the ledger: 3 commits have gone by without a review, or 20 events aren't
+in the knowledge graph yet. `brief` returns the same list as `next_steps`, and the
+server's instructions and the session-start snapshot tell agents to pass it on to you.
+`next_steps` also holds a step for the main agent alone, which owns the phase: the phase
+hasn't changed in 20 commits. A phase is a stage of work, not a release version or a
+backlog; releases and ideas are logged as `release` and `idea` events.
 
 An agent host without MCP can still read memory from the CLI (`status`, `query`,
 `history`, `prompt`), but the CLI writes as you: only the Claude Code and Docker Agent
@@ -251,7 +255,7 @@ Other hosts: run `nazareth serve` as a stdio MCP server and set `NAZARETH_ACTOR`
 | `status` | What needs you, constraints, decisions, recent activity |
 | `answer <q-id> "..."` | Answer a lens's question |
 | `resolve <id> --accept\|--reject` | Settle a pending decision |
-| `decide`, `constrain` | Record your own decisions and constraints |
+| `decide`, `constrain` | Record your own decisions and constraints (`decide --amends <id>` changes a detail of one) |
 | `retire <id> --why` | Take a decision or constraint out of effect |
 | `phase [X] [--next Y]` | Show or set the project phase (`--current X` also works) |
 | `query <text>` / `query --id <id>` | Search (records, questions, events, graph facts), or read one item in full with its links |
@@ -275,10 +279,10 @@ colour off, `FORCE_COLOR` to keep it when piping). `status`, `history`, `query`,
 |---|---|
 | `brief` | Phase, constraints, active decisions, pending items, questions, recent activity |
 | `query` | Search (keyword, plus semantic and knowledge graph facts with the extras), or read one item by id |
-| `decide` | Record a decision; `supersedes` replaces earlier ones |
+| `decide` | Record a decision; `supersedes` replaces earlier ones, `amends` changes a detail and keeps them in effect, `answers` closes the questions it settles |
 | `constrain` | Record a non-negotiable constraint |
 | `ask` | Leave a question for the human |
-| `log` | Record an artifact, finding, test, … |
+| `log` | Record an artifact, finding, fix, test, release or idea |
 | `phase` | Read or set the project phase |
 | `history` | Read the ledger |
 

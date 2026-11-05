@@ -121,3 +121,31 @@ def test_color_follows_the_environment(tmp_path: Path, capsys, monkeypatch) -> N
     monkeypatch.delenv("FORCE_COLOR")
     monkeypatch.setenv("NO_COLOR", "1")
     assert "\033[" not in run(tmp_path, capsys, "status")
+
+
+def test_status_flags_old_questions(tmp_path: Path, capsys,
+                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+
+    run(tmp_path, capsys, "init")
+    mem = Memory(StatePaths(tmp_path))
+    fresh = mem.ask("Dark mode?", actor="lens:architect")
+    now = time.time()
+    monkeypatch.setattr(time, "time", lambda: now - 10 * 86400)
+    mem.ask("Support Windows?", actor="lens:code")
+    monkeypatch.undo()
+    mem.close()
+
+    out = run(tmp_path, capsys, "status")
+    assert "open 10 days" in out
+    [fresh_line] = [line for line in out.splitlines() if fresh["id"] in line]
+    assert "days" not in fresh_line
+    assert "or answer in your agent session" in out
+
+
+def test_decide_amends(tmp_path: Path, capsys) -> None:
+    run(tmp_path, capsys, "init")
+    a = json.loads(run(tmp_path, capsys, "decide", "paging", "50 rows", "--why", "x", "--json"))
+    b = json.loads(run(tmp_path, capsys, "decide", "paging", "100 rows on wide screens",
+                       "--why", "y", "--amends", a["id"], "--json"))
+    assert b["status"] == "active" and b["amended"] == [a["id"]]

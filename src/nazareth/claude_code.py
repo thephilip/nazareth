@@ -55,6 +55,10 @@ def _clip(text: str) -> str:
     return text if len(text) <= ITEM_CHARS else text[: ITEM_CHARS - 1] + "…"
 
 
+def _amends(r: dict[str, Any]) -> str:
+    return f" (amends {', '.join(r['amends'])})" if r.get("amends") else ""
+
+
 def render_context(brief: dict[str, Any], lenses: tuple[str, ...] = LENSES) -> str:
     """A compact, agent-facing snapshot of project memory for session start.
     `lenses` are the lens subagents this project has.
@@ -71,7 +75,9 @@ def render_context(brief: dict[str, Any], lenses: tuple[str, ...] = LENSES) -> s
     tail = [
         "",
         "Record as you work, not at the end: `decide` each design choice once it's settled "
-        "(change one by passing its id in `supersedes`), `ask` when you need the human, and "
+        "(replace one by passing its id in `supersedes`, or change a detail with `amends`), "
+        "`ask` when you need the human (record an answer they give in chat with "
+        "`decide(answers=[q-id])`), and "
         "`log` findings and follow-ups. If the human asks you to record a session, go back "
         "over its choices and do the same. "
         + (f"Specialist subagents: {', '.join(lenses)}. " if lenses else "")
@@ -84,9 +90,11 @@ def render_context(brief: dict[str, Any], lenses: tuple[str, ...] = LENSES) -> s
     if pending or open_q:
         waiting = ["", (f"**Waiting on the human:** {len(pending)} pending decision(s), "
                         f"{len(open_q)} open question(s). Don't rely on pending decisions.")]
-    if steps := brief.get("next_steps"):
-        waiting += ["", "**Next steps to suggest to the human** (early, briefly):",
-                    *(_clip(f"- {s['text']} `{s['command']}`") for s in steps)]
+    steps = brief.get("next_steps", [])
+    for who, title in (("agent", "**Next steps for you:**"),
+                       ("human", "**Next steps to suggest to the human** (early, briefly):")):
+        if mine := [s for s in steps if s["for"] == who]:
+            waiting += ["", title, *(_clip(f"- {s['text']} `{s['command']}`") for s in mine)]
 
     answers = brief.get("recent_answers", [])[:5]
     parts = [  # (title, lines, total, where to find the rest), in budget priority order
@@ -94,7 +102,8 @@ def render_context(brief: dict[str, Any], lenses: tuple[str, ...] = LENSES) -> s
          [_clip(f"- {r['id']}: {r['text']}") for r in brief["constraints"]],
          len(brief["constraints"]), "`query`"),
         ("**Active decisions:**",
-         [_clip(f"- {r['id']} [{r['topic']}]: {r['text']}") for r in brief["decisions"]],
+         [_clip(f"- {r['id']} [{r['topic']}]{_amends(r)}: {r['text']}")
+          for r in brief["decisions"]],
          brief["active_decision_count"], "`query`"),
         ("**Recently answered:**",
          [_clip(f"- {q['id']}: {q['question']} → {q['answer']}") for q in answers],

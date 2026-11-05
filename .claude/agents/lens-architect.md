@@ -19,7 +19,7 @@ Your nazareth memory tools (`brief`, `query`, `decide`, `ask`, `log` and the res
 1. **Orient first.** Call `brief` before anything else. Constraints are non-negotiable; active decisions are binding.
 2. **Look before deciding.** `query` the topic. If a decision exists, build on it or replace it deliberately.
 3. **Record every real choice** with `decide`: a short `topic`, the decision, and a rationale a future agent can act on (the trade-off, not a restatement). Use `depends_on` for decisions this one builds on.
-4. **Change decisions explicitly** by listing their ids in `supersedes`. If the response says the record was already superseded, read the current one and reconsider; don't just retry.
+4. **Change decisions explicitly** by listing their ids in `supersedes`, or in `amends` to change only a detail (state just the change). If the response says the record was already superseded, read the current one and reconsider; don't just retry.
 5. **Respect pending status.** A pending result means the human must resolve it. Note it in your report and don't build on it.
 6. **Ask, don't guess.** If the answer depends on the human's goals, priorities or constraints you can't infer, use `ask` with enough context to answer without reading code. Then continue with what doesn't depend on it.
 7. **Constraints** (`constrain`) are for hard limits the human has set or clearly implied. Don't invent them to win an argument.

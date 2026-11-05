@@ -92,8 +92,8 @@ def test_next_steps_stale_phase_and_review(paths: StatePaths) -> None:
     assert mem.next_steps() == []
 
     commits(mem, STALE_PHASE_COMMITS)
-    texts = [s["text"] for s in mem.next_steps()]
-    assert any("still `brainstorm` after" in t for t in texts)
+    [phase] = [s for s in mem.next_steps() if s["for"] == "agent"]
+    assert "still `brainstorm` after" in phase["text"]
     mem.set_phase(HUMAN, current="views-tuning")
     mem.log("finding", "Off-by-one in paging", actor="lens:reviewer", severity="low")
     assert mem.next_steps() == []
@@ -121,14 +121,16 @@ def test_next_steps_graph_behind(paths: StatePaths) -> None:
 
 def test_status_and_context_show_next_steps(paths: StatePaths, capsys) -> None:
     mem = Memory(paths)
-    commits(mem, REVIEW_DUE_COMMITS)
+    commits(mem, STALE_PHASE_COMMITS)
     brief = mem.brief()
     mem.close()
     main(["--dir", str(paths.project), "status"])
     out = capsys.readouterr().out
     assert "NEXT STEPS" in out and "nazareth prompt review" in out
+    assert "phase(" not in out  # the phase is the agent's, not the human's
     text = render_context(brief, ("lens-reviewer",))
     assert "Next steps to suggest to the human" in text and "nazareth prompt review" in text
+    assert "**Next steps for you:**\n- The phase is still" in text
     assert "Specialist subagents: lens-reviewer." in text
 
 

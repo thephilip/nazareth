@@ -17,5 +17,6 @@ Focus: $ARGUMENTS
    agent would need. Commits are logged automatically when the git hook is installed;
    don't log them again.
 3. `ask` the human about anything left undecided that needs them.
-4. Call `brief` and tell the human what waits on them: pending decisions, open questions
-   and any `next_steps`, each with the exact command to run.
+4. Call `brief`, do any `next_steps` meant for you (such as setting the phase), and tell
+   the human what waits on them: pending decisions, open questions and the other
+   `next_steps`, each with the exact command to run.

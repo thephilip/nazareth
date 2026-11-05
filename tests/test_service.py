@@ -261,3 +261,63 @@ def test_ledger_replaced_triggers_reindex(paths: StatePaths) -> None:
     b = m2.decide("db", "SQLite", "simple", actor=ARCH)
     assert [r["id"] for r in m2.brief()["decisions"]] == [b["id"]]
     m2.close()
+
+
+def test_amend_keeps_both_in_effect(mem: Memory) -> None:
+    a = mem.decide("paging", "Show 50 rows, refresh every 30 s", "default", actor=ARCH)
+    out = mem.decide("paging", "Refresh every 60 s", "load", actor=CODE, amends=[a["id"]])
+    assert out["status"] == "active" and out["amended"] == [a["id"]]
+    assert mem.get(a["id"])["status"] == "active"
+    assert mem.get(a["id"])["amended_by"] == [out["id"]]
+    assert mem.get(out["id"])["amends"] == [a["id"]]
+    [amendment] = [d for d in mem.brief()["decisions"] if d["id"] == out["id"]]
+    assert amendment["amends"] == [a["id"]]
+
+    with pytest.raises(NazarethError, match="both superseded and amended"):
+        mem.decide("paging", "x", "y", actor=CODE, supersedes=[a["id"]], amends=[a["id"]])
+    new = mem.decide("paging", "Infinite scroll", "UX", actor=ARCH,
+                     supersedes=[a["id"], out["id"]])
+    with pytest.raises(NazarethError, match=f"{new['id']} is the decision in effect now"):
+        mem.decide("paging", "Refresh every 90 s", "load", actor=CODE, amends=[a["id"]])
+
+
+def test_lens_amending_human_decision_is_pending(mem: Memory) -> None:
+    h = mem.decide("auth", "API keys", "MVP", actor=HUMAN)
+    p = mem.decide("auth", "Keys expire after 90 days", "hygiene", actor=CODE, amends=[h["id"]])
+    assert p["status"] == "pending" and "amends human-made" in p["pending_reason"]
+    out = mem.resolve(p["id"], accept=True)
+    assert "superseded" not in out
+    assert mem.get(h["id"])["status"] == "active"
+    assert mem.get(p["id"])["status"] == "active"
+
+
+def test_decision_answers_questions(mem: Memory) -> None:
+    q1 = mem.ask("Page size?", actor=ARCH)
+    q2 = mem.ask("Keep the old filter?", actor=ARCH)
+    out = mem.decide("paging", "50 rows; the old filter goes", "the human said so in chat",
+                     actor="agent:main", answers=[q1["id"], q2["id"]])
+    assert out["answered"] == [q1["id"], q2["id"]]
+    brief = mem.brief()
+    assert "open_questions" not in brief
+    answers = {q["id"]: q for q in brief["recent_answers"]}
+    assert answers[q1["id"]]["answer"] == f"{out['id']}: 50 rows; the old filter goes"
+    assert answers[q1["id"]]["answered_by"] == "agent:main"
+    assert sorted(mem.get(out["id"])["answers"]) == sorted([q1["id"], q2["id"]])
+    with pytest.raises(NazarethError, match="already answered"):
+        mem.decide("other", "x", "y", actor="agent:main", answers=[q1["id"]])
+    with pytest.raises(NazarethError, match="Unknown question"):
+        mem.decide("other", "x", "y", actor="agent:main", answers=["q-nope"])
+
+
+def test_pending_decision_answers_when_accepted(mem: Memory) -> None:
+    mem.decide("auth", "API keys", "MVP", actor=ARCH)
+    q = mem.ask("OAuth for customers?", actor=ARCH)
+    p = mem.decide("auth", "OAuth", "customers", actor=CODE, answers=[q["id"]])
+    assert p["status"] == "pending" and "stay open" in p["note"]
+    assert mem.brief()["open_questions"][0]["id"] == q["id"]
+    mem.resolve(p["id"], accept=True)
+    assert "open_questions" not in mem.brief()
+
+    before = mem.brief()
+    mem.index.rebuild()
+    assert mem.brief() == before

@@ -10,6 +10,11 @@ Write policy (decided under the ledger lock, then recorded in the event):
 - Only the human may supersede what the human decided. A lens that tries is
   recorded as *pending* too.
 - Pending records have no effect until the human resolves them.
+- A decision may amend active decisions instead of superseding them: both stay
+  in effect, and the amendment states only what changes. It is held as pending
+  on the same terms as a supersede (a lens amending a human decision).
+- A decision may settle open questions (`answers`); they close when it takes
+  effect, with the decision as their answer.
 """
 
 from __future__ import annotations
@@ -37,7 +42,7 @@ BRIEF_DECISION_LIMIT = 100
 GIT_ACTOR = "git"  # the post-commit hook (git_hook.py); refused over MCP like HUMAN
 COMMIT_ACTION = "commit"
 # next_steps thresholds
-STALE_PHASE_COMMITS = 5
+STALE_PHASE_COMMITS = 20
 REVIEW_DUE_COMMITS = 3
 GRAPH_BEHIND_EVENTS = 20
 REVIEW_ACTIONS = frozenset({"finding", "review"})
@@ -315,25 +320,34 @@ class Memory:
             raise NazarethError(f"Unknown record id {rid!r}. Use `query` to find current IDs.")
         return row
 
-    def _check_supersedable(self, ids: list[str], kind: str) -> list[sqlite3.Row]:
+    def _check_supersedable(self, ids: list[str], kind: str,
+                            verb: str = "supersede") -> list[sqlite3.Row]:
         rows = []
         for rid in ids:
             row = self._require_record(rid)
             if row["kind"] != kind:
-                raise NazarethError(f"{rid} is a {row['kind']}; a {kind} can only supersede {kind}s.")
+                raise NazarethError(f"{rid} is a {row['kind']}; a {kind} can only {verb} {kind}s.")
             status = row["status"]
             if status == "superseded":
                 current = self.index.current_successor(rid)
                 raise NazarethError(
                     f"{rid} was already superseded; {current} is the {kind} in effect now. "
-                    f"Read it with query(id={current!r}) and supersede {current} instead."
+                    f"Read it with query(id={current!r}) and {verb} {current} instead."
                 )
             if status == "pending":
-                raise NazarethError(f"{rid} is pending human review and can't be superseded yet.")
+                raise NazarethError(f"{rid} is pending human review and can't be {verb}d yet.")
             if status != "active":
-                raise NazarethError(f"{rid} is {status} and no longer in effect; nothing to supersede.")
+                raise NazarethError(f"{rid} is {status} and no longer in effect; nothing to {verb}.")
             rows.append(row)
         return rows
+
+    def _check_open_questions(self, ids: list[str]) -> None:
+        for qid in ids:
+            row = self.index.question(qid)
+            if row is None:
+                raise NazarethError(f"Unknown question id {qid!r}. Use `brief` to see open ones.")
+            if row["status"] != "open":
+                raise NazarethError(f"{qid} is already {row['status']}.")
 
     def _related(self, text: str, exclude: set[str], limit: int = 5) -> list[dict[str, Any]]:
         out = []
@@ -355,14 +369,21 @@ class Memory:
         topic: str | None,
         supersedes: list[str] | None,
         depends_on: list[str] | None,
+        amends: list[str] | None = None,
+        answers: list[str] | None = None,
     ) -> dict[str, Any]:
         if not text.strip():
             raise NazarethError(f"The {kind} text is empty.")
         supersedes, depends_on = _clean_ids(supersedes), _clean_ids(depends_on)
+        amends, answers = _clean_ids(amends), _clean_ids(answers)
+        if both := set(supersedes) & set(amends):
+            raise NazarethError(f"{', '.join(sorted(both))} can't be both superseded and amended.")
         warnings: list[str] = []
         with self.ledger.transaction():
             self.index.sync()
             superseded_rows = self._check_supersedable(supersedes, kind)
+            amended_rows = self._check_supersedable(amends, kind, verb="amend")
+            self._check_open_questions(answers)
             for rid in depends_on:
                 row = self._require_record(rid)
                 if row["status"] != "active":
@@ -374,21 +395,26 @@ class Memory:
             if kind == "decision":
                 conflicts = [r["id"] for r in self.index.records(kind="decision", status="active",
                                                                   topic=topic)
-                             if r["id"] not in supersedes]
+                             if r["id"] not in supersedes and r["id"] not in amends]
                 if conflicts:
                     reasons.append(
                         f"topic {topic!r} already has active decision(s) {', '.join(conflicts)} "
                         "that this doesn't supersede"
                     )
             if actor != HUMAN:
-                human_owned = [r["id"] for r in superseded_rows if r["actor"] == HUMAN]
-                if human_owned:
-                    reasons.append(f"it supersedes human-made {', '.join(human_owned)}")
+                for verb, rows in (("supersedes", superseded_rows), ("amends", amended_rows)):
+                    human_owned = [r["id"] for r in rows if r["actor"] == HUMAN]
+                    if human_owned:
+                        reasons.append(f"it {verb} human-made {', '.join(human_owned)}")
             status = "pending" if reasons else "active"
 
             rid = self._new_id("dec" if kind == "decision" else "con")
             record = {"id": rid, "topic": topic, "text": text.strip(), "rationale": rationale.strip(),
                       "status": status, "supersedes": supersedes, "depends_on": depends_on}
+            if amends:
+                record["amends"] = amends
+            if answers:
+                record["answers"] = answers
             if reasons:
                 record["status_reason"] = "; ".join(reasons)
             self.ledger.append(actor=actor, action=kind, summary=text.strip(), ref=rid,
@@ -399,14 +425,19 @@ class Memory:
         if status == "active":
             if supersedes:
                 out["superseded"] = supersedes
+            if amends:
+                out["amended"] = amends
+            if answers:
+                out["answered"] = answers
         else:
             out["pending_reason"] = record["status_reason"]
             out["note"] = (
                 "Not in effect until the human resolves it. To replace the existing record "
                 "yourself, call again with supersedes=[...] listing it; otherwise carry on "
                 "without relying on this one."
+                + (" The questions it answers stay open until then." if answers else "")
             )
-        related = self._related(f"{topic or ''} {text}", exclude={rid, *supersedes})
+        related = self._related(f"{topic or ''} {text}", exclude={rid, *supersedes, *amends})
         if related:
             out["related_active"] = related
         if warnings:
@@ -417,12 +448,14 @@ class Memory:
 
     def decide(self, topic: str, decision: str, rationale: str, actor: str,
                supersedes: list[str] | None = None,
-               depends_on: list[str] | None = None) -> dict[str, Any]:
+               depends_on: list[str] | None = None,
+               amends: list[str] | None = None,
+               answers: list[str] | None = None) -> dict[str, Any]:
         topic = _norm_topic(topic)
         if not topic:
             raise NazarethError("A decision needs a topic (e.g. 'auth', 'storage').")
         return self._write_record("decision", actor, decision, rationale, topic,
-                                  supersedes, depends_on)
+                                  supersedes, depends_on, amends, answers)
 
     def constrain(self, constraint: str, reason: str, actor: str, topic: str | None = None,
                   supersedes: list[str] | None = None) -> dict[str, Any]:
@@ -463,7 +496,8 @@ class Memory:
     def resolve(self, record_id: str, accept: bool, note: str | None = None,
                 actor: str = HUMAN) -> dict[str, Any]:
         """Accept or reject a pending record. Accepting a decision also
-        supersedes whatever active decisions it conflicted with on its topic."""
+        supersedes whatever active decisions it conflicted with on its topic, except
+        those it amends, and closes the questions it answers."""
         dropped: list[str] = []
         with self.ledger.transaction():
             self.index.sync()
@@ -476,9 +510,11 @@ class Memory:
                 payload["note"] = note
             if accept:
                 wanted = [l["dst"] for l in self.index.links(src=record_id, link_type="supersedes")]
+                amended = {l["dst"] for l in self.index.links(src=record_id, link_type="amends")}
                 if row["kind"] == "decision":
                     wanted += [r["id"] for r in self.index.records(
-                        kind="decision", status="active", topic=row["topic"])]
+                        kind="decision", status="active", topic=row["topic"])
+                        if r["id"] not in amended]
                 supersedes = []
                 for rid in dict.fromkeys(wanted):
                     target = self.index.record(rid)
@@ -557,12 +593,14 @@ class Memory:
             for key, rows in (
                 ("supersedes", self.index.links(src=item_id, link_type="supersedes")),
                 ("depends_on", self.index.links(src=item_id, link_type="depends_on")),
+                ("amends", self.index.links(src=item_id, link_type="amends")),
+                ("answers", self.index.links(src=item_id, link_type="answers")),
             ):
                 if rows:
                     out[key] = [r["dst"] for r in rows]
-            dependents = self.index.links(dst=item_id, link_type="depends_on")
-            if dependents:
-                out["dependents"] = [r["src"] for r in dependents]
+            for key, link_type in (("dependents", "depends_on"), ("amended_by", "amends")):
+                if rows := self.index.links(dst=item_id, link_type=link_type):
+                    out[key] = [r["src"] for r in rows]
             return out
         q = self.index.question(item_id)
         if q is not None:
@@ -685,11 +723,21 @@ class Memory:
         """Everything a lens needs to orient itself, in one call."""
         self.index.sync()
         decisions = self.index.records(kind="decision", status="active")
+        amends: dict[str, list[str]] = {}
+        for link in self.index.links(link_type="amends"):
+            amends.setdefault(link["src"], []).append(link["dst"])
+
+        def decision_out(r: sqlite3.Row) -> dict[str, Any]:
+            out = _record_out(r, full=False)
+            if r["id"] in amends:
+                out["amends"] = amends[r["id"]]
+            return out
+
         out: dict[str, Any] = {
             "phase": self.index.phase(),
             "constraints": [_record_out(r, full=False)
                             for r in self.index.records(kind="constraint", status="active")],
-            "decisions": [_record_out(r, full=False) for r in decisions[:BRIEF_DECISION_LIMIT]],
+            "decisions": [decision_out(r) for r in decisions[:BRIEF_DECISION_LIMIT]],
             "active_decision_count": len(decisions),
         }
         if len(decisions) > BRIEF_DECISION_LIMIT:
@@ -714,7 +762,8 @@ class Memory:
     def next_steps(self, phase: dict[str, str] | None = None) -> list[dict[str, str]]:
         """Housekeeping that's easy to forget, worked out from the ledger alone (no
         LLM, and the graph is never opened): a phase that no longer moves, commits
-        nobody reviewed, and a knowledge graph falling behind."""
+        nobody reviewed, and a knowledge graph falling behind. Each step says who it is
+        `for`: the agent (agent:main owns the phase) or the human."""
         entries = self.ledger.entries()
 
         def commits_since(is_mark: Callable[[LedgerEntry], bool]) -> int:
@@ -729,12 +778,14 @@ class Memory:
         phase = phase or self.phase()
         if (n := commits_since(lambda e: e.action == "phase")) >= STALE_PHASE_COMMITS:
             steps.append({
+                "for": "agent",
                 "text": f"The phase is still `{phase['current']}` after {n} commits; if the "
-                        "work has moved on, set it so every session starts with the right "
-                        "picture.",
-                "command": "nazareth phase <current> --next <next>"})
+                        "work has moved on to another stage, set it so every session starts "
+                        "with the right picture.",
+                "command": "phase(set_current=..., set_next=...)"})
         if (n := commits_since(lambda e: e.action in REVIEW_ACTIONS)) >= REVIEW_DUE_COMMITS:
             steps.append({
+                "for": "human",
                 "text": f"{n} commits since the last review. Run the review workflow "
                         "(`/nazareth-review` in Claude Code).",
                 "command": "nazareth prompt review"})
@@ -747,6 +798,7 @@ class Memory:
             behind = sum(e.seq > done for e in entries) if done is not None else 0
             if behind >= GRAPH_BEHIND_EVENTS:
                 steps.append({
+                    "for": "human",
                     "text": f"{behind} ledger events aren't in the knowledge graph yet.",
                     "command": "nazareth enrich  (with your LLM settings)"})
         return steps
