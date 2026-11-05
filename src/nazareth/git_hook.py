@@ -13,7 +13,7 @@ from pathlib import Path
 
 from nazareth.memory.service import COMMIT_ACTION, GIT_ACTOR, Memory, NazarethError
 
-__all__ = ["COMMIT_ACTION", "GIT_ACTOR", "install", "record"]
+__all__ = ["COMMIT_ACTION", "GIT_ACTOR", "install", "main_worktree", "record"]
 HOOK_NAME = "post-commit"
 HOOK_MARKER = "nazareth record-commit"
 HOOK_SCRIPT = f"""#!/bin/sh
@@ -57,9 +57,20 @@ def install(project: Path) -> list[tuple[str, str]]:
     return [(rel, "created: commits are logged to memory")]
 
 
-def record(mem: Memory, project: Path) -> dict | None:
-    """Log HEAD as a `commit` event, once per commit. None if there's nothing to log."""
-    head = _git(project, "log", "-1", "--format=%H%n%s")
+def main_worktree(repo: Path) -> Path | None:
+    """The main worktree of the repo at `repo`, which is where `.nazareth/` lives when
+    `repo` is a linked worktree (`git worktree add`). None for a bare repo or no repo."""
+    common = _git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return None
+    common_dir = Path(common)
+    return common_dir.parent if common_dir.name == ".git" else None
+
+
+def record(mem: Memory, repo: Path) -> dict | None:
+    """Log the HEAD of the worktree at `repo` as a `commit` event, once per commit.
+    None if there's nothing to log."""
+    head = _git(repo, "log", "-1", "--format=%H%n%s")
     if not head or "\n" not in head:
         return None
     sha, subject = head.split("\n", 1)
@@ -67,7 +78,7 @@ def record(mem: Memory, project: Path) -> dict | None:
     if any(e.ref == short for e in mem.ledger.query(actor=GIT_ACTOR, action=COMMIT_ACTION,
                                                      limit=20)):
         return None
-    files = (_git(project, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r",
+    files = (_git(repo, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r",
                   "HEAD") or "").splitlines()
     shown = ", ".join(files[:FILES_SHOWN]) + (f", … {len(files) - FILES_SHOWN} more"
                                                if len(files) > FILES_SHOWN else "")

@@ -27,6 +27,7 @@ def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         monkeypatch.setenv(f"GIT_{who}_EMAIL", "test@example.com")
     monkeypatch.setenv("PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"])
     monkeypatch.delenv("NAZARETH_PROJECT_DIR", raising=False)
+    monkeypatch.delenv("CLAUDE_PROJECT_DIR", raising=False)
     git(tmp_path, "init", "-q")
     return tmp_path
 
@@ -77,6 +78,20 @@ def test_record_lists_a_few_files(repo: Path) -> None:
     assert out is not None
     [(_, summary)] = commits(repo)
     assert summary.startswith("Many files (f0.txt, ") and summary.endswith("… 2 more)")
+
+
+def test_commits_in_a_linked_worktree_are_logged(repo: Path, tmp_path_factory) -> None:
+    main(["--dir", str(repo), "init"])
+    commit(repo, "a.py", "First")
+    tree = tmp_path_factory.mktemp("elsewhere") / "wt"
+    git(repo, "worktree", "add", "-q", "-b", "feature", str(tree))
+    commit(tree, "b.py", "Built in a worktree")  # the shared hook runs with cwd = tree
+
+    sha = git(tree, "rev-parse", "HEAD").strip()
+    assert not (tree / ".nazareth").exists()
+    assert (sha[:10], "Built in a worktree (b.py)") in commits(repo)
+    assert len(commits(repo)) == 2
+    assert git_hook.main_worktree(tree) == repo.resolve()
 
 
 def test_hook_is_harmless_without_nazareth_state(repo: Path) -> None:

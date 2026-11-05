@@ -149,9 +149,17 @@ def cmd_record_commit(args: argparse.Namespace) -> None:
     """For the git post-commit hook: log HEAD, silently, if this project uses nazareth."""
     from nazareth import git_hook
 
+    repo = Path(args.dir).resolve() if args.dir else Path.cwd()
     paths = _paths(args)
+    if not paths.initialized and not args.dir:
+        # A commit in a linked worktree: the state lives in the main worktree.
+        main_tree = git_hook.main_worktree(repo)
+        if main_tree:
+            paths = StatePaths(main_tree)
     if paths.initialized:
-        git_hook.record(_memory(args), paths.project)
+        mem = Memory(paths)
+        _opened.append(mem)
+        git_hook.record(mem, repo)
 
 
 def cmd_nudge(args: argparse.Namespace) -> None:

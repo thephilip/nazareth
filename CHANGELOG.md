@@ -7,6 +7,13 @@ same change as the code.
 
 ## [Unreleased]
 
+### Fixed
+
+- Commits made in a linked git worktree are logged. The shared `post-commit` hook ran
+  there, but `record-commit` looked for `.nazareth/` in the worktree, didn't find it and
+  skipped the commit silently; it now uses the main worktree's memory and the linked
+  worktree's HEAD. In one project this had left 43% of commits out of the ledger.
+
 ## [0.3.1] - 2026-10-24
 
 ### Added

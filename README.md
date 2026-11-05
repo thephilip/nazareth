@@ -69,7 +69,8 @@ nazareth status
 In a git repository, `init` also adds a `post-commit` hook that logs each commit (subject,
 short sha and a few of its files) as a `commit` event by actor `git`, so the memory shows
 what was built even when agents forget to log it. It's local to your clone, never fails a
-commit, and does nothing in a project without `.nazareth/`. An existing `post-commit` hook
+commit, and does nothing in a project without `.nazareth/`. Commits made in a linked
+worktree (`git worktree add`) are logged to the main worktree's memory. An existing `post-commit` hook
 is left alone, as is a project with `core.hooksPath` set (e.g. husky); `init` then says
 which line to add yourself.
 
